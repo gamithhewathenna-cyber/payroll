@@ -1,12 +1,12 @@
 <?php
 // config.php - Edit these values to match your cPanel database
 define('DB_HOST', 'localhost');
-define('DB_USER', 'matsaqyg_employeadmin'); // e.g. john_payroll
-define('DB_PASS', '(TF$bMY[4&cd=0rg');
-define('DB_NAME', 'matsaqyg_Employe'); // e.g. john_payrolldb
+define('DB_USER', 'matsaqyg_payrolladmin'); // e.g. john_payroll
+define('DB_PASS', '(q#k@jDL^?$H=ylr');
+define('DB_NAME', 'matsaqyg_payroll'); // e.g. john_payrolldb
 
 define('SITE_NAME', 'PayrollPro');
-define('SITE_URL', 'https://employees.creativelements.co'); // No trailing slash
+define('SITE_URL', 'https://business.creativelements.co'); // No trailing slash
 
 // Start session
 if (session_status() === PHP_SESSION_NONE) {
