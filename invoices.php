@@ -76,7 +76,7 @@ if ($action === 'status' && $id) {
     $pd = $s === 'paid' ? date('Y-m-d') : null;
     $db->prepare("UPDATE invoices SET status=?, paid_date=? WHERE id=?")->execute([$s, $pd, $id]);
     setFlash('success', 'Status updated.');
-    header('Location: ' . SITE_URL . '/invoices.php'); exit;
+    header('Location: ' . SITE_URL . '/invoices.php?tab=' . ($_GET['tab'] ?? 'invoices')); exit;
 }
 
 // SAVE (add/edit)
@@ -360,6 +360,9 @@ $activeRange = $dateRange;
               </select>
             </td>
             <td data-label=""><div class="mob-actions">
+              <?php if (!in_array($inv['status'], ['paid','cancelled'])): ?>
+              <a href="?action=status&id=<?= $inv['id'] ?>&s=paid&tab=<?= $tab ?>" class="btn btn-success btn-sm" title="Mark as Paid" onclick="return confirm('Mark <?= h($inv['invoice_number']) ?> as paid?')">✓ Paid</a>
+              <?php endif; ?>
               <a href="<?= SITE_URL ?>/invoice_form.php?id=<?= $inv['id'] ?>&tab=<?= $tab ?>" class="btn btn-ghost btn-sm">View</a>
               <a href="<?= SITE_URL ?>/invoice_form.php?id=<?= $inv['id'] ?>&edit=1&tab=<?= $tab ?>" class="btn btn-ghost btn-sm">Edit</a>
               <button onclick="openPDF('<?= SITE_URL ?>/invoice_print.php?id=<?= $inv['id'] ?>','<?= h($inv['invoice_number']) ?>')" class="btn btn-primary btn-sm">⬇️ PDF</button>
