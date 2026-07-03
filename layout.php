@@ -1,0 +1,228 @@
+<?php
+// includes/layout.php — CSS & JS fully embedded, no external file dependencies
+
+function getInlineStyles() {
+    return <<<'CSS'
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+  --text: #e6edf3; --text2: #8b949e; --accent: #3b82f6; --accent2: #1d4ed8;
+  --green: #00c48c; --red: #ff4d6d; --yellow: #f5a623;
+  --sidebar-w: 240px; --radius: 10px;
+}
+body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px; }
+.app-shell { display: flex; min-height: 100vh; }
+.sidebar { width: var(--sidebar-w); background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; transition: transform .25s ease; }
+.sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 20px 20px 16px; border-bottom: 1px solid var(--border); }
+.brand-icon { width: 36px; height: 36px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; font-family: 'Poppins', sans-serif; }
+.brand-name { font-family: 'Poppins', sans-serif; font-weight: 800; font-size: 17px; letter-spacing: -.3px; }
+.sidebar-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 7px; color: var(--text2); text-decoration: none; font-size: 13.5px; font-weight: 500; transition: all .15s; }
+.nav-item:hover, .nav-item.active { background: var(--bg3); color: var(--text); }
+.nav-item.active { color: var(--accent); }
+.nav-icon { font-size: 15px; width: 20px; text-align: center; }
+.sidebar-footer { padding: 14px 14px 18px; border-top: 1px solid var(--border); }
+.user-badge { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.user-avatar { width: 34px; height: 34px; background: var(--accent); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-family: 'Poppins', sans-serif; font-size: 14px; flex-shrink: 0; }
+.user-name { font-weight: 600; font-size: 13px; }
+.user-role { color: var(--text2); font-size: 11px; text-transform: capitalize; }
+.logout-btn { display: block; text-align: center; padding: 7px; border-radius: 6px; background: var(--bg3); color: var(--text2); text-decoration: none; font-size: 12.5px; transition: all .15s; margin-bottom: 4px; }
+.logout-btn:hover { background: var(--red); color: #fff; }
+.main-content { margin-left: var(--sidebar-w); flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+.topbar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0 24px; height: 56px; display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 50; }
+.menu-toggle { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; }
+.page-title { font-family: 'Poppins', sans-serif; font-size: 18px; font-weight: 700; }
+.content-area { padding: 24px; flex: 1; }
+.flash-msg { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 20px; color: #fff; font-weight: 500; font-size: 13.5px; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 20px; }
+.card-title { font-family: 'Poppins', sans-serif; font-size: 15px; font-weight: 700; margin-bottom: 16px; color: var(--text); }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; position: relative; overflow: hidden; }
+.stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent); }
+.stat-card.green::before { background: var(--green); }
+.stat-card.red::before { background: var(--red); }
+.stat-card.yellow::before { background: var(--yellow); }
+.stat-label { color: var(--text2); font-size: 12px; font-weight: 500; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px; }
+.stat-value { font-family: 'Poppins', sans-serif; font-size: 26px; font-weight: 800; line-height: 1; margin-bottom: 4px; }
+.stat-sub { color: var(--text2); font-size: 11px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+thead th { background: var(--bg3); padding: 10px 14px; text-align: left; font-family: 'Poppins', sans-serif; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); white-space: nowrap; }
+tbody td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:hover td { background: rgba(255,255,255,.03); }
+tbody tr:last-child td { border-bottom: none; }
+.badge { display: inline-block; padding: 3px 9px; border-radius: 20px; font-size: 11.5px; font-weight: 600; }
+.badge-green { background: rgba(0,196,140,.15); color: var(--green); }
+.badge-red { background: rgba(255,77,109,.15); color: var(--red); }
+.badge-yellow { background: rgba(245,166,35,.15); color: var(--yellow); }
+.badge-blue { background: rgba(59,130,246,.15); color: var(--accent); }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 7px; border: none; cursor: pointer; font-family: 'Poppins', sans-serif; font-size: 13.5px; font-weight: 500; text-decoration: none; transition: all .15s; line-height: 1; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent2); }
+.btn-success { background: var(--green); color: #000; }
+.btn-success:hover { filter: brightness(1.1); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover { filter: brightness(1.1); }
+.btn-ghost { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+.btn-ghost:hover { color: var(--text); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.form-grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+.form-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+.form-grid.cols-1 { grid-template-columns: 1fr; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group.full { grid-column: 1 / -1; }
+label { font-size: 12.5px; font-weight: 500; color: var(--text2); }
+input, select, textarea { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 7px; font-family: 'Poppins', sans-serif; font-size: 13.5px; transition: border-color .15s; width: 100%; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+select option { background: var(--bg2); }
+textarea { resize: vertical; min-height: 80px; }
+.form-actions { display: flex; gap: 10px; padding-top: 8px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; align-items: center; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto; }
+.modal-header { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.modal-title { font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 16px; }
+.modal-close { background: none; border: none; color: var(--text2); font-size: 20px; cursor: pointer; line-height: 1; }
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 22px; }
+.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); background-image: radial-gradient(ellipse at 20% 50%, rgba(59,130,246,.08) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(0,196,140,.05) 0%, transparent 50%); }
+.login-box { width: 100%; max-width: 380px; padding: 0 20px; }
+.login-logo { text-align: center; margin-bottom: 36px; }
+.login-logo .brand-icon { width: 52px; height: 52px; font-size: 26px; margin: 0 auto 10px; }
+.login-logo h1 { font-family: 'Poppins', sans-serif; font-size: 28px; font-weight: 800; }
+.login-logo p { color: var(--text2); font-size: 13px; margin-top: 4px; }
+.login-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
+.login-card .form-group { margin-bottom: 14px; }
+.login-card .btn { width: 100%; justify-content: center; padding: 11px; font-size: 14px; }
+@media print { .sidebar, .topbar, .no-print { display: none !important; } .main-content { margin-left: 0 !important; } body { background: white !important; color: black !important; } .payslip-doc { background: white !important; color: black !important; border: none !important; } }
+.payslip-doc { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; max-width: 700px; }
+.payslip-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; border-bottom: 2px solid var(--accent); padding-bottom: 20px; }
+.payslip-company h2 { font-family: 'Poppins', sans-serif; font-size: 22px; font-weight: 800; }
+.payslip-company p { color: var(--text2); font-size: 12px; }
+.payslip-meta { text-align: right; }
+.payslip-meta h3 { font-family: 'Poppins', sans-serif; font-size: 16px; color: var(--accent); }
+.payslip-meta p { font-size: 12px; color: var(--text2); }
+.payslip-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+.payslip-section h4 { font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); margin-bottom: 10px; }
+.payslip-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.payslip-row:last-child { border-bottom: none; }
+.payslip-total { background: var(--bg3); border-radius: 8px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
+.payslip-total-label { font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 15px; }
+.payslip-total-amount { font-family: 'Poppins', sans-serif; font-weight: 800; font-size: 24px; color: var(--green); }
+@media (max-width: 768px) { .sidebar { transform: translateX(-100%); } .sidebar.open { transform: translateX(0); } .main-content { margin-left: 0; } .menu-toggle { display: block; } .form-grid { grid-template-columns: 1fr; } .form-grid.cols-3 { grid-template-columns: 1fr; } .stats-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .stats-grid { grid-template-columns: 1fr; } }
+CSS;
+}
+
+function getInlineJS() {
+    return <<<'JS'
+document.querySelectorAll('.nav-item').forEach(link => {
+    if (window.location.pathname.endsWith(link.getAttribute('href'))) link.classList.add('active');
+});
+document.addEventListener('click', (e) => {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.querySelector('.menu-toggle');
+    if (sidebar && sidebar.classList.contains('open') && !sidebar.contains(e.target) && e.target !== toggle) sidebar.classList.remove('open');
+});
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function confirmDelete(msg) { return confirm(msg || 'Are you sure you want to delete this?'); }
+const flash = document.querySelector('.flash-msg');
+if (flash) setTimeout(() => flash.style.opacity = '0', 3500);
+JS;
+}
+
+function pageHeader($title = 'Dashboard') {
+    $siteName = getSetting('company_name', SITE_NAME);
+    $logoPath = getSetting('logo_path', '');
+    $siteUrl = SITE_URL;
+    $role = $_SESSION['role'] ?? '';
+    $userName = $_SESSION['full_name'] ?? '';
+    $flash = getFlash();
+    $flashHtml = '';
+    if ($flash) {
+        $fc = $flash['type'] === 'success' ? '#00c48c' : ($flash['type'] === 'error' ? '#ff4d6d' : '#f5a623');
+        $flashHtml = '<div class="flash-msg" style="background:'.$fc.'">' . h($flash['msg']) . '</div>';
+    }
+    $css = getInlineStyles();
+
+    // Logo: image or text icon
+    $brandLogo = $logoPath
+        ? '<img src="' . h($siteUrl . '/' . $logoPath) . '" style="height:34px;width:34px;border-radius:8px;object-fit:cover" alt="Logo">'
+        : '<span class="brand-icon">' . strtoupper(substr($siteName, 0, 1)) . '</span>';
+
+    echo <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{$title} — {$siteName}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>{$css}</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      {$brandLogo}
+      <span class="brand-name">{$siteName}</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="{$siteUrl}/dashboard.php" class="nav-item"><span class="nav-icon">▦</span> Dashboard</a>
+HTML;
+
+    if ($role === 'admin') {
+        echo <<<HTML
+      <a href="{$siteUrl}/employees.php" class="nav-item"><span class="nav-icon">👤</span> Employees</a>
+      <a href="{$siteUrl}/payroll.php" class="nav-item"><span class="nav-icon">💰</span> Payroll</a>
+      <a href="{$siteUrl}/commissions.php" class="nav-item"><span class="nav-icon">📈</span> Commissions</a>
+      <a href="{$siteUrl}/allowances.php" class="nav-item"><span class="nav-icon">🎁</span> Allowances</a>
+      <a href="{$siteUrl}/payslips.php" class="nav-item"><span class="nav-icon">🧾</span> Payslips</a>
+      <a href="{$siteUrl}/reports.php" class="nav-item"><span class="nav-icon">📊</span> Reports</a>
+      <a href="{$siteUrl}/settings.php" class="nav-item"><span class="nav-icon">⚙️</span> Settings</a>
+HTML;
+    } else {
+        echo <<<HTML
+      <a href="{$siteUrl}/my_payslips.php" class="nav-item"><span class="nav-icon">🧾</span> My Payslips</a>
+      <a href="{$siteUrl}/my_history.php" class="nav-item"><span class="nav-icon">📋</span> Salary History</a>
+HTML;
+    }
+
+    echo <<<HTML
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-badge">
+        <div class="user-avatar">{$userName[0]}</div>
+        <div>
+          <div class="user-name">{$userName}</div>
+          <div class="user-role">{$role}</div>
+        </div>
+      </div>
+      <a href="{$siteUrl}/change_password.php" class="logout-btn">🔑 Change Password</a>
+      <a href="{$siteUrl}/logout.php" class="logout-btn">Sign Out</a>
+    </div>
+  </aside>
+  <div class="main-content">
+    <header class="topbar">
+      <button class="menu-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+      <h1 class="page-title">{$title}</h1>
+    </header>
+    <div class="content-area">
+      {$flashHtml}
+HTML;
+}
+
+function pageFooter() {
+    $js = getInlineJS();
+    echo <<<HTML
+    </div>
+  </div>
+</div>
+<script>{$js}</script>
+</body>
+</html>
+HTML;
+}
