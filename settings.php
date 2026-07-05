@@ -27,6 +27,7 @@ if ($action === 'company') {
 if ($action === 'bank') {
     foreach (['bank_name','bank_account_name','bank_account_number','bank_branch','bank_swift'] as $f)
         saveSetting($db, $f, trim($_POST[$f] ?? ''));
+    clearSettingsCache();
     setFlash('success', 'Bank details saved.');
     header('Location: '.SITE_URL.'/settings.php#bank'); exit;
 }
@@ -34,6 +35,7 @@ if ($action === 'bank') {
 if ($action === 'invoice_settings') {
     foreach (['invoice_prefix','quote_prefix','invoice_terms','invoice_notes'] as $f)
         saveSetting($db, $f, trim($_POST[$f] ?? ''));
+    clearSettingsCache();
     setFlash('success', 'Invoice settings saved.');
     header('Location: '.SITE_URL.'/settings.php#invoice'); exit;
 }
@@ -44,6 +46,7 @@ if ($action === 'invoice_reminders') {
     saveSetting($db, 'reminder_days_before_2', (string)max(0, (int)($_POST['reminder_days_before_2'] ?? 1)));
     $ccList = implode(',', array_filter(array_map('trim', explode(',', $_POST['invoice_cc_emails'] ?? '')), fn($e) => filter_var($e, FILTER_VALIDATE_EMAIL)));
     saveSetting($db, 'invoice_cc_emails', $ccList);
+    clearSettingsCache();
     setFlash('success', 'Invoice reminder settings saved.');
     header('Location: '.SITE_URL.'/settings.php#invoice'); exit;
 }
@@ -51,12 +54,14 @@ if ($action === 'invoice_reminders') {
 if ($action === 'exchange_rates') {
     foreach (['rate_usd_lkr','rate_aud_lkr','rate_eur_lkr','rate_gbp_lkr','rate_sgd_lkr'] as $f)
         saveSetting($db, $f, trim($_POST[$f] ?? ''));
+    clearSettingsCache();
     setFlash('success', 'Exchange rates saved.');
     header('Location: '.SITE_URL.'/settings.php#rates'); exit;
 }
 
 if ($action === 'ai_settings') {
     saveSetting($db, 'anthropic_api_key', trim($_POST['anthropic_api_key'] ?? ''));
+    clearSettingsCache();
     setFlash('success', 'AI settings saved.');
     header('Location: '.SITE_URL.'/settings.php#ai'); exit;
 }
