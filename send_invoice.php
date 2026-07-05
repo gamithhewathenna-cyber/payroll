@@ -1,7 +1,5 @@
 <?php
 require_once 'config.php';
-require_once __DIR__ . '/vendor/autoload.php';
-require_once __DIR__ . '/includes/invoice_render.php';
 requireAdmin();
 $db = getDB();
 
@@ -9,7 +7,7 @@ $id  = (int)($_GET['id'] ?? 0);
 $tab = $_GET['tab'] ?? 'invoices';
 if (!$id) { setFlash('error','Invalid request.'); header('Location: '.SITE_URL.'/invoices.php'); exit; }
 
-$inv = $db->prepare("SELECT i.*, c.company_name, c.contact_name, c.email as c_email, c.cc_emails as c_cc_emails, c.phone as c_phone, c.address, c.address_line2, c.city, c.country, c.vat_number FROM invoices i JOIN clients c ON c.id=i.client_id WHERE i.id=?");
+$inv = $db->prepare("SELECT i.*, c.company_name, c.contact_name, c.email as c_email, c.cc_emails as c_cc_emails FROM invoices i JOIN clients c ON c.id=i.client_id WHERE i.id=?");
 $inv->execute([$id]);
 $inv = $inv->fetch();
 if (!$inv) { setFlash('error','Invoice not found.'); header('Location: '.SITE_URL.'/invoices.php'); exit; }
@@ -26,46 +24,71 @@ $sym         = $S['currency_symbol'] ?? 'Rs.';
 $companyName = $S['company_name']    ?? SITE_NAME;
 $isQuote     = $inv['invoice_type'] === 'quotation';
 $docLabel    = $isQuote ? 'Quotation' : 'Invoice';
-$greetName   = $inv['contact_name'] ?: $inv['company_name'];
-$monthLabel  = $inv['billing_month'] ? date('F Y', strtotime($inv['billing_month'].'-01')) : date('F Y', strtotime($inv['issue_date']));
+$period      = date('d F Y', strtotime($inv['issue_date']));
 
-// ── Render the exact same branded invoice used on invoice_print.php, as a real PDF ──
-$tmpDir = __DIR__ . '/tmp/mpdf';
-if (!is_dir($tmpDir)) mkdir($tmpDir, 0755, true);
+function fm2($amount, $sym) { return $sym . ' ' . number_format((float)$amount, 2); }
 
-$mpdf = new \Mpdf\Mpdf([
-    'format'     => 'A4',
-    'margin_left'   => 10,
-    'margin_right'  => 10,
-    'margin_top'    => 10,
-    'margin_bottom' => 12,
-    'tempDir'    => $tmpDir,
-]);
-$mpdf->WriteHTML('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>' . renderInvoiceHtml($inv, $items, $S) . '</body></html>');
-$pdfBytes = $mpdf->Output('', \Mpdf\Output\Destination::STRING_RETURN);
-$pdfName  = preg_replace('/[^A-Za-z0-9._-]/', '_', $inv['invoice_number']) . '.pdf';
-
-// ── Simple, left-aligned, mobile-friendly email body ──
 ob_start();
 ?>
 <!DOCTYPE html>
 <html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<head><meta charset="UTF-8">
 <style>
-  body { margin:0; padding:0; background:#fff; font-family:Arial,Helvetica,sans-serif; }
-  .wrap { max-width:100%; padding:24px; text-align:left; color:#222; font-size:14px; line-height:1.6; }
-  p { margin:0 0 14px; }
+  body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; color: #333; }
+  .wrap { max-width: 620px; margin: 0 auto; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.1); }
+  .header { background: #1a1f2e; color: #fff; padding: 28px 32px; }
+  .header h1 { margin: 0 0 4px; font-size: 22px; }
+  .header p { margin: 0; opacity: .7; font-size: 13px; }
+  .meta { background: #3b82f6; color: #fff; padding: 14px 32px; display: flex; justify-content: space-between; font-size: 13px; }
+  .body { padding: 28px 32px; }
+  .greeting { font-size: 15px; margin-bottom: 20px; color: #444; }
+  table.items { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  table.items th { background: #f8f8f8; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: #888; padding: 8px 10px; }
+  table.items th.r, table.items td.r { text-align: right; }
+  table.items td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+  .total-box { background: #f0fdf4; border: 2px solid #00c48c; border-radius: 8px; padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+  .total-label { font-size: 15px; font-weight: 700; color: #333; }
+  .total-amount { font-size: 26px; font-weight: 800; color: #00c48c; }
+  .btn-view { display: inline-block; background: #3b82f6; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 7px; font-weight: 700; font-size: 14px; margin-top: 20px; }
+  .footer { background: #f8f8f8; padding: 18px 32px; text-align: center; font-size: 12px; color: #999; border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <p>Hi <?= htmlspecialchars($greetName) ?>,</p>
-  <p>Please find the attached <?= strtolower($docLabel) ?> for <?= htmlspecialchars($monthLabel) ?>.</p>
-  <p>If you have any questions, please let us know.</p>
-  <p>Thank you!</p>
-  <p><?= htmlspecialchars($companyName) ?></p>
+  <div class="header">
+    <h1><?= htmlspecialchars($companyName) ?></h1>
+    <p><?= $docLabel ?> <?= htmlspecialchars($inv['invoice_number']) ?></p>
+  </div>
+  <div class="meta">
+    <span>📅 Issued: <strong><?= $period ?></strong></span>
+    <?php if ($inv['due_date']): ?><span><?= $isQuote?'Valid Until':'Due' ?>: <strong><?= date('d M Y', strtotime($inv['due_date'])) ?></strong></span><?php endif; ?>
+  </div>
+  <div class="body">
+    <p class="greeting">Dear <strong><?= htmlspecialchars($inv['contact_name'] ?: $inv['company_name']) ?></strong>,<br>
+    Please find your <?= strtolower($docLabel) ?> <strong><?= htmlspecialchars($inv['invoice_number']) ?></strong> below.</p>
+
+    <table class="items">
+      <thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Amount</th></tr></thead>
+      <tbody>
+        <?php foreach ($items as $item): $desc = explode('|||', $item['description'], 2)[0]; ?>
+        <tr><td><?= htmlspecialchars(trim($desc)) ?></td><td class="r"><?= rtrim(rtrim(number_format($item['quantity'],2),'0'),'.') ?></td><td class="r"><?= fm2($item['amount'], $sym) ?></td></tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+
+    <div class="total-box">
+      <span class="total-label">Total <?= $isQuote?'Amount':'Due' ?></span>
+      <span class="total-amount"><?= fm2($inv['total'], $sym) ?></span>
+    </div>
+
+    <div style="text-align:center">
+      <a class="btn-view" href="<?= SITE_URL ?>/invoice_print.php?id=<?= $id ?>"><?= $isQuote?'View Quotation':'View & Download Invoice' ?></a>
+    </div>
+  </div>
+  <div class="footer">
+    <p><?= htmlspecialchars($companyName) ?></p>
+    <p style="margin-top:4px">This is a system-generated <?= strtolower($docLabel) ?>. Please do not reply to this email.</p>
+  </div>
 </div>
 </body>
 </html>
@@ -73,38 +96,27 @@ ob_start();
 $emailBody = ob_get_clean();
 
 // Recipients
-$toEmail = $inv['c_email'];
-$ccList  = array_unique(array_filter(array_map('trim', explode(',', ($inv['c_cc_emails'] ?? '') . ',' . getSetting('invoice_cc_emails','')))));
+$toEmail  = $inv['c_email'];
+$ccList   = array_filter(array_map('trim', explode(',', ($inv['c_cc_emails'] ?? '') . ',' . (getSetting('invoice_cc_emails','')))));
+$ccList   = array_unique($ccList);
 
 $fromEmail = getSetting('email_from') ?: (getSetting('company_email') ?: 'accounts@creativelements.co');
 $fromName  = $companyName;
 $subject   = "{$docLabel} {$inv['invoice_number']} from {$companyName}";
 $msgId     = '<' . time() . '.' . md5($toEmail) . '@creativelements.co>';
-$boundary  = 'PR_' . md5($msgId);
 
 $headers  = "MIME-Version: 1.0\r\n";
+$headers .= "Content-Type: text/html; charset=UTF-8\r\n";
 $headers .= "From: {$fromName} <{$fromEmail}>\r\n";
 if ($ccList) $headers .= "Cc: " . implode(', ', $ccList) . "\r\n";
 $headers .= "Reply-To: {$fromEmail}\r\n";
 $headers .= "Return-Path: {$fromEmail}\r\n";
 $headers .= "Message-ID: {$msgId}\r\n";
 $headers .= "Date: " . date('r') . "\r\n";
-$headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
-$headers .= "Content-Type: multipart/mixed; boundary=\"{$boundary}\"";
-
-$body  = "--{$boundary}\r\n";
-$body .= "Content-Type: text/html; charset=UTF-8\r\n";
-$body .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
-$body .= $emailBody . "\r\n\r\n";
-$body .= "--{$boundary}\r\n";
-$body .= "Content-Type: application/pdf; name=\"{$pdfName}\"\r\n";
-$body .= "Content-Transfer-Encoding: base64\r\n";
-$body .= "Content-Disposition: attachment; filename=\"{$pdfName}\"\r\n\r\n";
-$body .= chunk_split(base64_encode($pdfBytes)) . "\r\n";
-$body .= "--{$boundary}--";
+$headers .= "X-Mailer: PHP/" . phpversion();
 
 $params = "-f{$fromEmail}";
-$sent = mail($toEmail, $subject, $body, $headers, $params);
+$sent = mail($toEmail, $subject, $emailBody, $headers, $params);
 
 if ($sent) {
     $allRecipients = array_merge([$toEmail], $ccList);
