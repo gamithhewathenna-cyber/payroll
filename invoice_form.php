@@ -209,6 +209,11 @@ pageHeader($pageTitle);
       </div>
       <a href="<?= SITE_URL ?>/invoice_print.php?id=<?= $id ?>" target="_blank" class="btn btn-ghost btn-sm">👁 View</a>
       <button onclick="openPDF('<?= SITE_URL ?>/invoice_print.php?id=<?= $id ?>','<?= h($inv['invoice_number']) ?>')" class="btn btn-primary btn-sm">⬇️ PDF</button>
+      <?php if (!empty($inv['c_email'])): ?>
+        <a href="<?= SITE_URL ?>/send_invoice.php?id=<?= $id ?>&tab=<?= $tab ?>" class="btn btn-success btn-sm" onclick="return confirm('Send this <?= $isQuote?'quotation':'invoice' ?> to <?= h($inv['c_email']) ?>?')">📧 Send <?= $isQuote?'Quotation':'Invoice' ?></a>
+      <?php else: ?>
+        <span class="btn btn-ghost btn-sm" style="opacity:.5;cursor:not-allowed" title="This client has no email address on file">📧 No Client Email</span>
+      <?php endif; ?>
       <?php if (!isset($_GET['edit'])): ?>
         <a href="?id=<?= $id ?>&edit=1&tab=<?= $tab ?>" class="btn btn-primary">✏️ Edit</a>
         <a href="?action=delete&id=<?= $id ?>&tab=<?= $tab ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete <?= h($inv['invoice_number']) ?>?')">🗑 Delete</a>

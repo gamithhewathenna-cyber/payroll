@@ -17,15 +17,16 @@ if ($action === 'delete' && $id) {
 // POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $d = $_POST;
+    $ccEmails = implode(',', array_filter(array_map('trim', $d['cc_emails'] ?? []), fn($e) => filter_var($e, FILTER_VALIDATE_EMAIL)));
     if ($action === 'add') {
         try {
-            $db->prepare("INSERT INTO clients (company_name,contact_name,email,phone,address,address_line2,city,country,vat_number,industry,status,notes,default_currency) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-               ->execute([trim($d['company_name']),trim($d['contact_name']??''),trim($d['email']??''),trim($d['phone']??''),trim($d['address']??''),trim($d['address_line2']??''),trim($d['city']??''),trim($d['country']??'Sri Lanka'),trim($d['vat_number']??''),trim($d['industry']??''),$d['status']??'active',trim($d['notes']??''),$d['default_currency']??'LKR']);
+            $db->prepare("INSERT INTO clients (company_name,contact_name,email,cc_emails,phone,address,address_line2,city,country,vat_number,industry,status,notes,default_currency) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+               ->execute([trim($d['company_name']),trim($d['contact_name']??''),trim($d['email']??''),$ccEmails,trim($d['phone']??''),trim($d['address']??''),trim($d['address_line2']??''),trim($d['city']??''),trim($d['country']??'Sri Lanka'),trim($d['vat_number']??''),trim($d['industry']??''),$d['status']??'active',trim($d['notes']??''),$d['default_currency']??'LKR']);
             setFlash('success', 'Client added.');
         } catch (Exception $e) { setFlash('error', 'Error: ' . $e->getMessage()); }
     } elseif ($action === 'edit') {
-        $db->prepare("UPDATE clients SET company_name=?,contact_name=?,email=?,phone=?,address=?,address_line2=?,city=?,country=?,vat_number=?,industry=?,status=?,notes=?,default_currency=? WHERE id=?")
-           ->execute([trim($d['company_name']),trim($d['contact_name']??''),trim($d['email']??''),trim($d['phone']??''),trim($d['address']??''),trim($d['address_line2']??''),trim($d['city']??''),trim($d['country']??'Sri Lanka'),trim($d['vat_number']??''),trim($d['industry']??''),$d['status']??'active',trim($d['notes']??''),$d['default_currency']??'LKR',$id]);
+        $db->prepare("UPDATE clients SET company_name=?,contact_name=?,email=?,cc_emails=?,phone=?,address=?,address_line2=?,city=?,country=?,vat_number=?,industry=?,status=?,notes=?,default_currency=? WHERE id=?")
+           ->execute([trim($d['company_name']),trim($d['contact_name']??''),trim($d['email']??''),$ccEmails,trim($d['phone']??''),trim($d['address']??''),trim($d['address_line2']??''),trim($d['city']??''),trim($d['country']??'Sri Lanka'),trim($d['vat_number']??''),trim($d['industry']??''),$d['status']??'active',trim($d['notes']??''),$d['default_currency']??'LKR',$id]);
         setFlash('success', 'Client updated.');
     }
     header('Location: ' . SITE_URL . '/clients.php'); exit;
@@ -106,6 +107,11 @@ pageHeader('Clients');
           <div class="form-group full"><label>Company Name *</label><input name="company_name" required placeholder="e.g. ABC Holdings"></div>
           <div class="form-group"><label>Contact Person</label><input name="contact_name" placeholder="e.g. John Smith"></div>
           <div class="form-group"><label>Email</label><input type="email" name="email" placeholder="contact@company.com"></div>
+          <div class="form-group full">
+            <label>CC Emails <span style="color:var(--text2);font-weight:400">(receive invoice emails &amp; payment reminders)</span></label>
+            <div class="cc-email-list" id="ccList-add"></div>
+            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addCcRow('ccList-add')">+ Add Email</button>
+          </div>
           <div class="form-group"><label>Phone</label><input name="phone" placeholder="+94 11 234 5678"></div>
           <div class="form-group"><label>Industry</label><input name="industry" placeholder="e.g. Retail, Finance, Tech"></div>
           <div class="form-group"><label>Status</label>
@@ -151,6 +157,11 @@ pageHeader('Clients');
           <div class="form-group full"><label>Company Name *</label><input name="company_name" required value="<?= h($editRow['company_name']) ?>"></div>
           <div class="form-group"><label>Contact Person</label><input name="contact_name" value="<?= h($editRow['contact_name']) ?>"></div>
           <div class="form-group"><label>Email</label><input type="email" name="email" value="<?= h($editRow['email']) ?>"></div>
+          <div class="form-group full">
+            <label>CC Emails <span style="color:var(--text2);font-weight:400">(receive invoice emails &amp; payment reminders)</span></label>
+            <div class="cc-email-list" id="ccList-edit"></div>
+            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addCcRow('ccList-edit')">+ Add Email</button>
+          </div>
           <div class="form-group"><label>Phone</label><input name="phone" value="<?= h($editRow['phone']) ?>"></div>
           <div class="form-group"><label>Industry</label><input name="industry" value="<?= h($editRow['industry']) ?>"></div>
           <div class="form-group"><label>Status</label>
@@ -182,5 +193,25 @@ pageHeader('Clients');
   </div>
 </div>
 <?php endif; ?>
+
+<script>
+function ccRowHTML(value) {
+  return `<div class="cc-email-row" style="display:flex;gap:6px;margin-bottom:6px">
+    <input type="email" name="cc_emails[]" value="${value ? value.replace(/"/g,'&quot;') : ''}" placeholder="cc@company.com" style="flex:1">
+    <button type="button" onclick="this.closest('.cc-email-row').remove()" style="background:var(--red);border:none;color:#fff;border-radius:5px;width:32px;cursor:pointer;font-size:14px">×</button>
+  </div>`;
+}
+function addCcRow(listId, value) {
+  document.getElementById(listId).insertAdjacentHTML('beforeend', ccRowHTML(value));
+}
+document.addEventListener('DOMContentLoaded', () => addCcRow('ccList-add'));
+<?php if ($editRow): ?>
+document.addEventListener('DOMContentLoaded', () => {
+  const existing = <?= json_encode(array_filter(array_map('trim', explode(',', $editRow['cc_emails'] ?? '')))) ?>;
+  if (existing.length) existing.forEach(e => addCcRow('ccList-edit', e));
+  else addCcRow('ccList-edit');
+});
+<?php endif; ?>
+</script>
 
 <?php pageFooter(); ?>

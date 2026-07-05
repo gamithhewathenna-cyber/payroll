@@ -38,6 +38,16 @@ if ($action === 'invoice_settings') {
     header('Location: '.SITE_URL.'/settings.php#invoice'); exit;
 }
 
+if ($action === 'invoice_reminders') {
+    saveSetting($db, 'invoice_reminders_enabled', isset($_POST['invoice_reminders_enabled']) ? '1' : '0');
+    saveSetting($db, 'reminder_days_before_1', (string)max(0, (int)($_POST['reminder_days_before_1'] ?? 3)));
+    saveSetting($db, 'reminder_days_before_2', (string)max(0, (int)($_POST['reminder_days_before_2'] ?? 1)));
+    $ccList = implode(',', array_filter(array_map('trim', explode(',', $_POST['invoice_cc_emails'] ?? '')), fn($e) => filter_var($e, FILTER_VALIDATE_EMAIL)));
+    saveSetting($db, 'invoice_cc_emails', $ccList);
+    setFlash('success', 'Invoice reminder settings saved.');
+    header('Location: '.SITE_URL.'/settings.php#invoice'); exit;
+}
+
 if ($action === 'exchange_rates') {
     foreach (['rate_usd_lkr','rate_aud_lkr','rate_eur_lkr','rate_gbp_lkr','rate_sgd_lkr'] as $f)
         saveSetting($db, $f, trim($_POST[$f] ?? ''));
@@ -88,6 +98,7 @@ pageHeader('Settings');
   <a href="#company">🏢 Company</a>
   <a href="#bank">🏦 Bank Details</a>
   <a href="#invoice">🧾 Invoice</a>
+  <a href="#invoice-reminders">📧 Reminders</a>
   <a href="#rates">💱 Exchange Rates</a>
   <a href="#logo">🖼 Logo</a>
   <a href="#ai">🤖 AI Assistant</a>
@@ -152,6 +163,29 @@ pageHeader('Settings');
       <div class="form-group full"><label>Default Footer Notes</label><textarea name="invoice_notes" rows="2"><?= h($s['invoice_notes']??'Thank you for your business.') ?></textarea></div>
     </div>
     <div class="form-actions"><button type="submit" class="btn btn-primary">Save Invoice Settings</button></div>
+  </form>
+</div>
+
+<!-- ── INVOICE EMAILS & REMINDERS ───────────────────────── -->
+<div class="card settings-section" id="invoice-reminders">
+  <div class="card-title">📧 Invoice Emails &amp; Payment Reminders</div>
+  <form method="POST">
+    <input type="hidden" name="action" value="invoice_reminders">
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" name="invoice_reminders_enabled" <?= ($s['invoice_reminders_enabled']??'1')==='1'?'checked':'' ?> style="width:16px;height:16px">
+          Automatically send payment reminder emails before the due date
+        </label>
+      </div>
+      <div class="form-group"><label>1st Reminder — Days Before Due Date</label><input type="number" name="reminder_days_before_1" min="0" value="<?= h($s['reminder_days_before_1']??'3') ?>"></div>
+      <div class="form-group"><label>2nd Reminder — Days Before Due Date</label><input type="number" name="reminder_days_before_2" min="0" value="<?= h($s['reminder_days_before_2']??'1') ?>"></div>
+      <div class="form-group full">
+        <label>Always CC on Invoice Emails &amp; Reminders <span style="color:var(--text2);font-weight:400">(comma-separated)</span></label>
+        <input name="invoice_cc_emails" value="<?= h($s['invoice_cc_emails']??'accounts@creativelements.co,reach@creativelements.co') ?>" placeholder="accounts@creativelements.co,reach@creativelements.co">
+      </div>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Save Reminder Settings</button></div>
   </form>
 </div>
 
