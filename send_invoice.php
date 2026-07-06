@@ -26,6 +26,14 @@ $isQuote     = $inv['invoice_type'] === 'quotation';
 $docLabel    = $isQuote ? 'Quotation' : 'Invoice';
 $period      = date('d F Y', strtotime($inv['issue_date']));
 
+// Show amounts in the invoice's own currency (e.g. USD/AUD) rather than always the base LKR symbol
+$invCur      = $inv['inv_currency'] ?? 'LKR';
+$invRate     = (float)($inv['inv_rate'] ?? 1) ?: 1;
+$isForeign   = $invCur !== 'LKR';
+$curSymbols  = ['LKR'=>'Rs.','USD'=>'$','AUD'=>'A$','EUR'=>'€','GBP'=>'£','SGD'=>'S$'];
+$fSym        = $curSymbols[$invCur] ?? $invCur;
+$tSym        = $isForeign ? $fSym : $sym;
+
 function fm2($amount, $sym) { return $sym . ' ' . number_format((float)$amount, 2); }
 
 ob_start();
@@ -70,15 +78,20 @@ ob_start();
     <table class="items">
       <thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Amount</th></tr></thead>
       <tbody>
-        <?php foreach ($items as $item): $desc = explode('|||', $item['description'], 2)[0]; ?>
-        <tr><td><?= htmlspecialchars(trim($desc)) ?></td><td class="r"><?= rtrim(rtrim(number_format($item['quantity'],2),'0'),'.') ?></td><td class="r"><?= fm2($item['amount'], $sym) ?></td></tr>
+        <?php foreach ($items as $item):
+          $desc       = explode('|||', $item['description'], 2)[0];
+          $isExpItem  = $item['item_type'] === 'expense';
+          $dispSym    = ($isForeign && !$isExpItem) ? $fSym : $sym;
+          $amtDisplay = ($isForeign && !$isExpItem) ? $item['quantity'] * $item['unit_price'] : $item['amount'];
+        ?>
+        <tr><td><?= htmlspecialchars(trim($desc)) ?></td><td class="r"><?= rtrim(rtrim(number_format($item['quantity'],2),'0'),'.') ?></td><td class="r"><?= fm2($amtDisplay, $dispSym) ?></td></tr>
         <?php endforeach; ?>
       </tbody>
     </table>
 
     <div class="total-box">
       <span class="total-label">Total <?= $isQuote?'Amount':'Due' ?></span>
-      <span class="total-amount"><?= fm2($inv['total'], $sym) ?></span>
+      <span class="total-amount"><?= fm2($isForeign ? $inv['total']/$invRate : $inv['total'], $tSym) ?></span>
     </div>
 
     <div style="text-align:center">
