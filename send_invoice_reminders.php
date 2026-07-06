@@ -5,6 +5,7 @@
 //   https://business.creativelements.co/send_invoice_reminders.php?token=YOUR_CRON_TOKEN
 // (the token is generated in the `settings` table by invoice_email_upgrade.sql — check its value there)
 require_once 'config.php';
+require_once __DIR__ . '/includes/reminder_render.php';
 $db = getDB();
 
 if (php_sapi_name() !== 'cli') {
@@ -29,48 +30,9 @@ $stmt = $db->prepare("SELECT i.*, c.company_name AS client_name, c.contact_name,
 $stmt->execute();
 $invoices = $stmt->fetchAll();
 
-function reminderBody($inv, $companyName, $sym, $daysLeft) {
-    ob_start();
-    $overdue = $daysLeft < 0;
-    ?>
-    <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-      body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; color: #333; }
-      .wrap { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.1); }
-      .header { background: <?= $overdue ? '#c0392b' : '#1a1f2e' ?>; color: #fff; padding: 24px 32px; }
-      .header h1 { margin: 0 0 4px; font-size: 20px; }
-      .body { padding: 26px 32px; font-size: 14px; line-height: 1.6; }
-      .total-box { background: #fff8e1; border: 2px solid #f5a623; border-radius: 8px; padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; margin: 18px 0; }
-      .total-amount { font-size: 22px; font-weight: 800; color: #c0392b; }
-      .btn-view { display: inline-block; background: #3b82f6; color: #fff; text-decoration: none; padding: 11px 26px; border-radius: 7px; font-weight: 700; font-size: 14px; }
-      .footer { background: #f8f8f8; padding: 16px 32px; text-align: center; font-size: 12px; color: #999; border-top: 1px solid #eee; }
-    </style></head><body>
-    <div class="wrap">
-      <div class="header"><h1>💳 Payment Reminder</h1><p style="margin:0;opacity:.8;font-size:13px"><?= htmlspecialchars($companyName) ?></p></div>
-      <div class="body">
-        <p>Dear <strong><?= htmlspecialchars($inv['contact_name'] ?: $inv['client_name']) ?></strong>,</p>
-        <p><?php if ($overdue): ?>
-          This is a reminder that invoice <strong><?= htmlspecialchars($inv['invoice_number']) ?></strong> is now <strong>overdue</strong>.
-        <?php else: ?>
-          This is a reminder that invoice <strong><?= htmlspecialchars($inv['invoice_number']) ?></strong> is due in <strong><?= $daysLeft ?> day<?= $daysLeft==1?'':'s' ?></strong> (<?= date('d M Y', strtotime($inv['due_date'])) ?>).
-        <?php endif; ?></p>
-        <div class="total-box">
-          <span>Amount Due</span>
-          <span class="total-amount"><?= $sym ?> <?= number_format($inv['total'],2) ?></span>
-        </div>
-        <div style="text-align:center;margin-top:10px">
-          <a class="btn-view" href="<?= SITE_URL ?>/invoice_print.php?id=<?= $inv['id'] ?>">View Invoice</a>
-        </div>
-      </div>
-      <div class="footer"><p><?= htmlspecialchars($companyName) ?></p><p style="margin-top:4px">This is a system-generated reminder. Please do not reply to this email.</p></div>
-    </div>
-    </body></html>
-    <?php
-    return ob_get_clean();
-}
-
 function sendReminderEmail($db, $inv, $reminderType, $daysLeft, $companyName, $sym, $fromEmail, $ccSetting) {
     if (!$inv['c_email']) return false;
-    $body = reminderBody($inv, $companyName, $sym, $daysLeft);
+    $body = reminderEmailBody($inv, $companyName, $sym, $daysLeft);
     $ccList = array_unique(array_filter(array_map('trim', explode(',', ($inv['c_cc_emails'] ?? '') . ',' . $ccSetting))));
     $subject = ($daysLeft < 0 ? 'Overdue: ' : 'Payment Reminder: ') . "Invoice {$inv['invoice_number']}";
     $headers  = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n";

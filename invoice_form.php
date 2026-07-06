@@ -214,6 +214,9 @@ pageHeader($pageTitle);
       <?php else: ?>
         <span class="btn btn-ghost btn-sm" style="opacity:.5;cursor:not-allowed" title="This client has no email address on file">📧 No Client Email</span>
       <?php endif; ?>
+      <?php if (!$isQuote && !empty($inv['c_email']) && !empty($inv['due_date']) && !in_array($inv['status'], ['paid','cancelled'])): ?>
+        <a href="<?= SITE_URL ?>/send_invoice_reminder.php?id=<?= $id ?>&tab=<?= $tab ?>" class="btn btn-ghost btn-sm" onclick="return confirm('Send a payment reminder for <?= h($inv['invoice_number']) ?> to <?= h($inv['c_email']) ?>?')">🔔 Send Reminder</a>
+      <?php endif; ?>
       <?php if (!isset($_GET['edit'])): ?>
         <a href="?id=<?= $id ?>&edit=1&tab=<?= $tab ?>" class="btn btn-primary">✏️ Edit</a>
         <a href="?action=delete&id=<?= $id ?>&tab=<?= $tab ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete <?= h($inv['invoice_number']) ?>?')">🗑 Delete</a>
