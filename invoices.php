@@ -424,7 +424,7 @@ $defNotes = $S['invoice_notes'] ?? 'Thank you for your business.';
           </div>
           <div class="form-group">
             <label>Valid Until</label>
-            <input type="date" name="due_date" value="<?= $isEdit?h($editInv['due_date']??''):date('Y-m-d', strtotime('+30 days')) ?>">
+            <input type="date" name="due_date" value="<?= $isEdit?h($editInv['due_date']??''):date('Y-m-d', strtotime('+12 days')) ?>">
           </div>
           <div class="form-group" id="billingMonthWrap">
             <label>Billing Month <span style="color:var(--text2);font-weight:400">(for expense import)</span></label>

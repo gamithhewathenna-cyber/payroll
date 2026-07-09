@@ -350,7 +350,7 @@ $invRate    = $id ? (float)($inv['inv_rate']??1) : 1;
       </div>
       <div class="form-group" style="margin-bottom:12px">
         <label><?= $isQuote?'Valid Until':'Due Date' ?></label>
-        <input type="date" name="due_date" value="<?= h($id?($inv['due_date']??''):date('Y-m-d',strtotime('+30 days'))) ?>" <?= $isViewOnly?'readonly':'' ?>>
+        <input type="date" name="due_date" value="<?= h($id?($inv['due_date']??''):date('Y-m-d',strtotime('+12 days'))) ?>" <?= $isViewOnly?'readonly':'' ?>>
       </div>
       <div class="form-group" style="margin-bottom:12px">
         <label>Status</label>
