@@ -59,8 +59,17 @@ if ($action === 'get_expenses') {
 function nextInvoiceNumber($db, $type = 'invoice') {
     $prefix = getSetting($type === 'invoice' ? 'invoice_prefix' : 'quote_prefix', $type === 'invoice' ? 'INV' : 'QUO');
     $year   = date('Y');
-    $count  = $db->query("SELECT COUNT(*) FROM invoices WHERE invoice_type='{$type}' AND YEAR(issue_date)={$year}")->fetchColumn();
-    return $prefix . '-' . $year . '-' . str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+    // Base the next number on the highest one actually used, not a row COUNT() —
+    // COUNT() drifts out of sync (and collides with an existing number) once any
+    // invoice/quotation from this year has ever been deleted.
+    $stmt = $db->prepare("SELECT invoice_number FROM invoices WHERE invoice_type=? AND invoice_number LIKE ?");
+    $stmt->execute([$type, $prefix.'-'.$year.'-%']);
+    $max = 0;
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $num) {
+        $n = (int)substr(strrchr($num, '-'), 1);
+        if ($n > $max) $max = $n;
+    }
+    return $prefix . '-' . $year . '-' . str_pad($max + 1, 4, '0', STR_PAD_LEFT);
 }
 
 // DELETE
