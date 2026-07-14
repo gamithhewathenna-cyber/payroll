@@ -56,6 +56,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $costLKR     = $cost * $exRate;
     $total       = round($costLKR + ($costLKR * $markup / 100) + $addFee, 2);
 
+    // Receipt upload (PDF only) — keep the existing one if editing and no new file is given
+    $receiptPath = null;
+    if (!empty($_FILES['receipt']['name']) && $_FILES['receipt']['error'] === UPLOAD_ERR_OK) {
+        $ext = strtolower(pathinfo($_FILES['receipt']['name'], PATHINFO_EXTENSION));
+        if ($ext === 'pdf') {
+            $dir = 'uploads/receipts/';
+            if (!is_dir(__DIR__.'/'.$dir)) mkdir(__DIR__.'/'.$dir, 0755, true);
+            $fname = 'receipt_' . time() . '_' . mt_rand(1000, 9999) . '.pdf';
+            if (move_uploaded_file($_FILES['receipt']['tmp_name'], __DIR__.'/'.$dir.$fname)) {
+                $receiptPath = $dir . $fname;
+            }
+        }
+    }
+    if (!$receiptPath && $action === 'edit' && $id) {
+        $er = $db->prepare("SELECT receipt_path FROM expenses WHERE id=?");
+        $er->execute([$id]);
+        $receiptPath = $er->fetchColumn() ?: null;
+    }
+
     // Staff users — queue changes for admin approval
     if (!isAdmin()) {
         $payload = json_encode([
@@ -66,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'currency' => $currency, 'exchange_rate' => $exRate,
             'markup_percentage' => $markup, 'additional_fee' => $addFee,
             'total_billable' => $total, 'status' => $d['status']??'pending',
-            'notes' => trim($d['notes']??''),
+            'notes' => trim($d['notes']??''), 'receipt_path' => $receiptPath,
         ]);
         $db->prepare("INSERT INTO expense_change_requests (expense_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
            ->execute([$action === 'edit' ? $id : null, $action, $payload, $_SESSION['full_name']]);
@@ -75,8 +94,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'add') {
-        $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
-           ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$d['status']??'pending',trim($d['notes']??''),$_SESSION['full_name'],$_SESSION['full_name']]);
+        $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
+           ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$d['status']??'pending',trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$_SESSION['full_name']]);
         setFlash('success', 'Expense added.');
     } elseif ($action === 'edit') {
         $stmt = $db->prepare("SELECT exchange_rate, currency FROM expenses WHERE id=?");
@@ -87,8 +106,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $costLKR = $cost * $exRate;
             $total   = round($costLKR + ($costLKR * $markup / 100) + $addFee, 2);
         }
-        $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
-           ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$d['status']??'pending',trim($d['notes']??''),$_SESSION['full_name'],$id]);
+        $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
+           ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$d['status']??'pending',trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$id]);
         setFlash('success', 'Expense updated.');
     }
     header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m'))); exit;
@@ -168,11 +187,11 @@ if (isAdmin()) {
         if ($req) {
             $p = json_decode($req['payload'], true);
             if ($req['change_type'] === 'add') {
-                $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
-                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$req['requested_by'],$_SESSION['full_name']]);
+                $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
+                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$req['requested_by'],$_SESSION['full_name']]);
             } elseif ($req['change_type'] === 'edit') {
-                $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
-                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$_SESSION['full_name'],$req['expense_id']]);
+                $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
+                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$_SESSION['full_name'],$req['expense_id']]);
             } elseif ($req['change_type'] === 'delete') {
                 $db->prepare("DELETE FROM expenses WHERE id=?")->execute([$req['expense_id']]);
             }
@@ -217,6 +236,9 @@ if (isAdmin()) {
             <?php if ($r['change_type'] !== 'delete'): ?>
               <?= h($p['expense_category']??'') ?> — <?= h($p['client_name']??'Internal') ?><br>
               Amount: <strong style="color:var(--text)"><?= isset($p['total_billable']) ? formatMoney($p['total_billable']) : '—' ?></strong>
+              <?php if (!empty($p['receipt_path'])): ?>
+                <br><a href="<?= SITE_URL ?>/<?= h($p['receipt_path']) ?>" target="_blank" style="color:var(--accent)">📄 View Receipt</a>
+              <?php endif; ?>
             <?php else: ?>
               Delete expense ID #<?= $r['expense_id'] ?>
             <?php endif; ?>
@@ -414,6 +436,9 @@ if (!isAdmin()) {
               </select>
             </td>
             <td data-label=""><div class="mob-actions">
+              <?php if (isAdmin() && !empty($e['receipt_path'])): ?>
+                <a href="<?= SITE_URL ?>/<?= h($e['receipt_path']) ?>" target="_blank" class="btn btn-ghost btn-sm" title="View receipt">📄 Receipt</a>
+              <?php endif; ?>
               <a href="?action=edit&id=<?= $e['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm">Edit</a>
               <a href="?action=delete&id=<?= $e['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete this expense?')">Del</a>
             </div></td>
@@ -850,7 +875,7 @@ $rStats = $rStats->fetch();
       <button class="modal-close" onclick="closeModal('addModal')">×</button>
     </div>
     <div class="modal-body">
-      <form method="POST" action="?action=add">
+      <form method="POST" action="?action=add" enctype="multipart/form-data">
         <div class="form-grid">
           <div class="form-group"><label>Expense Date *</label><input type="date" name="expense_date" required value="<?= date('Y-m-d') ?>"></div>
           <div class="form-group"><label>Billing Month *</label><input type="month" name="billing_month" required value="<?= $filterMonth ?>"></div>
@@ -916,6 +941,7 @@ $rStats = $rStats->fetch();
               <option value="cancelled">Cancelled</option>
             </select>
           </div>
+          <div class="form-group"><label>Receipt (PDF)</label><input type="file" name="receipt" accept="application/pdf"></div>
           <div class="form-group full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Internal notes..."></textarea></div>
         </div>
         <div class="form-actions">
@@ -937,7 +963,7 @@ $rStats = $rStats->fetch();
       <button class="modal-close" onclick="window.location='<?= SITE_URL ?>/expenses.php?month=<?= $filterMonth ?>'">×</button>
     </div>
     <div class="modal-body">
-      <form method="POST" action="?action=edit&id=<?= $editRow['id'] ?>">
+      <form method="POST" action="?action=edit&id=<?= $editRow['id'] ?>" enctype="multipart/form-data">
         <div class="form-grid">
           <div class="form-group"><label>Expense Date *</label><input type="date" name="expense_date" required value="<?= h($editRow['expense_date']) ?>"></div>
           <div class="form-group"><label>Billing Month *</label><input type="month" name="billing_month" required value="<?= h($editRow['billing_month']) ?>"></div>
@@ -991,6 +1017,13 @@ $rStats = $rStats->fetch();
               <option value="paid"      <?= $editRow['status']==='paid'     ?'selected':'' ?>>Paid</option>
               <option value="cancelled" <?= $editRow['status']==='cancelled'?'selected':'' ?>>Cancelled</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label>Receipt (PDF)</label>
+            <input type="file" name="receipt" accept="application/pdf">
+            <?php if (isAdmin() && !empty($editRow['receipt_path'])): ?>
+              <span style="font-size:11px;color:var(--text2)">Current: <a href="<?= SITE_URL ?>/<?= h($editRow['receipt_path']) ?>" target="_blank" style="color:var(--accent)">📄 View</a> — upload a new file to replace it</span>
+            <?php endif; ?>
           </div>
           <div class="form-group full"><label>Notes</label><textarea name="notes" rows="2"><?= h($editRow['notes']) ?></textarea></div>
         </div>
