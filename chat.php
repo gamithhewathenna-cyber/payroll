@@ -36,8 +36,27 @@ function handleReadOnlyAction($db, $type, $d, $sym) {
     }
 
     if ($type === 'get_monthly_expenses') {
-        $m2 = $d['month'] ?? date('Y-m');
-        $t  = $db->prepare("SELECT
+        $m2     = $d['month'] ?? date('Y-m');
+        $client = trim($d['client_name'] ?? '');
+        $period = date('F Y', strtotime($m2.'-01'));
+
+        if ($client) {
+            $rows = $db->prepare("SELECT expense_date, expense_category, description, cost_amount, exchange_rate, total_billable
+                                   FROM expenses WHERE billing_month=? AND client_name LIKE ? ORDER BY expense_date");
+            $rows->execute([$m2, "%{$client}%"]);
+            $rows = $rows->fetchAll();
+            if (!$rows) return ['message' => "No expenses found for \"{$client}\" in {$period}.", 'link' => SITE_URL.'/expenses.php?month='.$m2.'&client='.urlencode($client)];
+            $total = array_sum(array_column($rows, 'total_billable'));
+            $msg = "💰 **{$client} — Expenses for {$period}**\n\n";
+            foreach ($rows as $r) {
+                $date = date('d M', strtotime($r['expense_date']));
+                $msg .= "- {$date}: **{$r['expense_category']}** — {$sym} ".number_format($r['total_billable'],2).($r['description'] ? " ({$r['description']})" : '')."\n";
+            }
+            $msg .= "\n**Total: {$sym} ".number_format($total,2)."** (".count($rows)." record".(count($rows)===1?'':'s').")";
+            return ['message' => $msg, 'link' => SITE_URL.'/expenses.php?month='.$m2.'&client='.urlencode($client)];
+        }
+
+        $t = $db->prepare("SELECT
                 COALESCE(SUM(cost_amount*exchange_rate),0) as total_cost,
                 COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable ELSE 0 END),0) as total_billable,
                 COALESCE(SUM(CASE WHEN billing_type='internal' THEN cost_amount*exchange_rate ELSE 0 END),0) as internal_cost,
@@ -45,25 +64,35 @@ function handleReadOnlyAction($db, $type, $d, $sym) {
               FROM expenses WHERE billing_month=?");
         $t->execute([$m2]);
         $t = $t->fetch();
-        $period = date('F Y', strtotime($m2.'-01'));
         $msg = "💰 **Total Expenses — {$period}**\n\nTotal Cost: {$sym} ".number_format($t['total_cost'],2)."\nClient-Billable: {$sym} ".number_format($t['total_billable'],2)."\nInternal Costs: {$sym} ".number_format($t['internal_cost'],2)."\nRecords: {$t['cnt']}";
         return ['message' => $msg, 'link' => SITE_URL.'/expenses.php?month='.$m2];
     }
 
     if ($type === 'get_pending_invoices') {
-        $rows = $db->query("SELECT i.invoice_number, i.total, i.due_date, i.status, c.company_name
-                             FROM invoices i JOIN clients c ON c.id=i.client_id
-                             WHERE i.invoice_type='invoice' AND i.status IN ('sent','overdue')
-                             ORDER BY i.due_date ASC")->fetchAll();
-        if (!$rows) return ['message' => "✅ No outstanding invoices — everything is paid up!", 'link' => SITE_URL.'/invoices.php'];
+        $client = trim($d['client_name'] ?? '');
+        $sql = "SELECT i.invoice_number, i.total, i.due_date, i.status, c.id as client_id, c.company_name
+                FROM invoices i JOIN clients c ON c.id=i.client_id
+                WHERE i.invoice_type='invoice' AND i.status IN ('sent','overdue')";
+        $params = [];
+        if ($client) { $sql .= " AND c.company_name LIKE ?"; $params[] = "%{$client}%"; }
+        $sql .= " ORDER BY i.due_date ASC";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+
+        $label = $client ? " for \"{$client}\"" : '';
+        if (!$rows) return ['message' => "✅ No outstanding invoices{$label} — everything is paid up!", 'link' => SITE_URL.'/invoices.php'];
         $total = array_sum(array_column($rows, 'total'));
-        $msg = "📋 **Outstanding Invoices** (".count($rows).", total {$sym} ".number_format($total,2).")\n\n";
+        $msg = "📋 **Outstanding Invoices{$label}** (".count($rows).", total {$sym} ".number_format($total,2).")\n\n";
         foreach ($rows as $r) {
             $due   = $r['due_date'] ? date('d M Y', strtotime($r['due_date'])) : '—';
             $badge = $r['status'] === 'overdue' ? '⚠️ Overdue' : '📤 Sent';
             $msg  .= "**{$r['invoice_number']}** — {$r['company_name']} — {$sym} ".number_format($r['total'],2)." — Due {$due} ({$badge})\n";
         }
-        return ['message' => trim($msg), 'link' => SITE_URL.'/invoices.php'];
+        $link = $client && count(array_unique(array_column($rows,'client_id'))) === 1
+            ? SITE_URL.'/invoices.php?client='.$rows[0]['client_id']
+            : SITE_URL.'/invoices.php';
+        return ['message' => trim($msg), 'link' => $link];
     }
 
     if ($type === 'get_bank_reference') {
@@ -119,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat'
     $rateUSD     = getSetting('rate_usd_lkr', '325');
     $rateAUD     = getSetting('rate_aud_lkr', '215');
 
-    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, clients, payroll, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**WRITE ACTIONS** (create/change something — always shown to the admin as a card with Confirm/Cancel buttons first; nothing is saved until they click Confirm):\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_client — Add a new client to the portal, with all their details\n4. create_payroll — Process payroll for an employee\n\n**READ-ONLY REPORT/LOOKUP ACTIONS** (these run immediately and show results right away — no confirmation needed, since viewing data can't change anything):\n5. get_report — Overall monthly summary (revenue, expenses, salaries, profit)\n6. get_expenses_by_client — Expenses grouped by client, with totals and a link to details\n7. get_monthly_expenses — Total expenses for a given month (cost, client-billable, internal)\n8. get_pending_invoices — List every outstanding (sent/overdue) invoice\n9. get_bank_reference — Look up the bank reference for a freelance payment by invoice number, project, or freelancer name\n\n10. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_client:** {\"action\":\"create_client\",\"data\":{\"company_name\":\"Ford Mustang\",\"contact_name\":\"John Smith\",\"email\":\"john@example.com\",\"phone\":\"+94 77 123 4567\",\"address\":\"123 Main St\",\"address_line2\":\"\",\"city\":\"Colombo\",\"country\":\"Sri Lanka\",\"vat_number\":\"\",\"industry\":\"Automotive\",\"notes\":\"\",\"default_currency\":\"USD\"}} — ask for whichever of these the admin hasn't given you before proposing it, but company_name is the only truly required field\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"month\":\"2026-06\"}}\n\n**get_expenses_by_client:** {\"action\":\"get_expenses_by_client\",\"data\":{\"month\":\"2026-06\"}} — use \\\"month\\\":\\\"all\\\" if the admin wants all-time instead of one month\n\n**get_monthly_expenses:** {\"action\":\"get_monthly_expenses\",\"data\":{\"month\":\"2026-06\"}}\n\n**get_pending_invoices:** {\"action\":\"get_pending_invoices\",\"data\":{}}\n\n**get_bank_reference:** {\"action\":\"get_bank_reference\",\"data\":{\"query\":\"INV-2026-0004\"}} — query can be an invoice number, project name, or freelancer name\n\n## Important Rules\n- For WRITE actions: always confirm details before acting — show a summary and ask the admin to confirm. Never claim you've already created something; say you're proposing it for approval.\n- For READ-ONLY report/lookup actions: just include the JSON block, the system fills in and displays the actual data automatically — you don't need to fetch or state the numbers yourself\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Separately from anything you propose, the system automatically surfaces pending vendor invoice submissions and staff expense requests as approval cards whenever the admin opens or uses this chat — you don't need to check for these yourself, just be aware they may appear and can explain them if asked\n- Be concise and friendly";
+    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, clients, payroll, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**WRITE ACTIONS** (create/change something — always shown to the admin as a card with Confirm/Cancel buttons first; nothing is saved until they click Confirm):\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_client — Add a new client to the portal, with all their details\n4. create_payroll — Process payroll for an employee\n\n**READ-ONLY REPORT/LOOKUP ACTIONS** (these run immediately and show results right away — no confirmation needed, since viewing data can't change anything):\n5. get_report — Overall monthly summary (revenue, expenses, salaries, profit)\n6. get_expenses_by_client — Expenses grouped by client, with totals and a link to details\n7. get_monthly_expenses — Total expenses for a given month (cost, client-billable, internal)\n8. get_pending_invoices — List every outstanding (sent/overdue) invoice\n9. get_bank_reference — Look up the bank reference for a freelance payment by invoice number, project, or freelancer name\n\n10. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_client:** {\"action\":\"create_client\",\"data\":{\"company_name\":\"Ford Mustang\",\"contact_name\":\"John Smith\",\"email\":\"john@example.com\",\"phone\":\"+94 77 123 4567\",\"address\":\"123 Main St\",\"address_line2\":\"\",\"city\":\"Colombo\",\"country\":\"Sri Lanka\",\"vat_number\":\"\",\"industry\":\"Automotive\",\"notes\":\"\",\"default_currency\":\"USD\"}} — ask for whichever of these the admin hasn't given you before proposing it, but company_name is the only truly required field\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"month\":\"2026-06\"}}\n\n**get_expenses_by_client:** {\"action\":\"get_expenses_by_client\",\"data\":{\"month\":\"2026-06\"}} — use \\\"month\\\":\\\"all\\\" if the admin wants all-time instead of one month\n\n**get_monthly_expenses:** {\"action\":\"get_monthly_expenses\",\"data\":{\"month\":\"2026-06\",\"client_name\":\"\"}} — omit or leave client_name empty for the overall monthly total; set it to get an itemized expense list + total for just that one client\n\n**get_pending_invoices:** {\"action\":\"get_pending_invoices\",\"data\":{\"client_name\":\"\"}} — omit or leave client_name empty to list all outstanding invoices; set it to filter to just that one client\n\n**get_bank_reference:** {\"action\":\"get_bank_reference\",\"data\":{\"query\":\"INV-2026-0004\"}} — query can be an invoice number, project name, or freelancer name\n\n## Important Rules\n- For WRITE actions: always confirm details before acting — show a summary and ask the admin to confirm. Never claim you've already created something; say you're proposing it for approval.\n- For READ-ONLY report/lookup actions: just include the JSON block, the system fills in and displays the actual data automatically — you don't need to fetch or state the numbers yourself\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Separately from anything you propose, the system automatically surfaces pending vendor invoice submissions and staff expense requests as approval cards whenever the admin opens or uses this chat — you don't need to check for these yourself, just be aware they may appear and can explain them if asked\n- Be concise and friendly";
 
     // ── cURL API call (works on cPanel shared hosting) ──
     $payload = json_encode([
