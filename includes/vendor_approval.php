@@ -3,6 +3,47 @@
 // Freelance → Approvals tab (freelance.php) and the AI Assistant chat popup (chat.php),
 // so approving/rejecting a vendor invoice behaves identically regardless of which UI did it.
 
+// Pending items awaiting approval via the chat popup/widget: vendor invoice submissions
+// and staff-submitted expense requests. Used by chat.php (full page) and includes/layout.php
+// (floating widget badge + cards) so both stay in sync automatically.
+function getPendingApprovals($db) {
+    $out = [];
+    $vendorRows = $db->query("SELECT vs.id, vs.project_name, vs.invoice_number, vs.payment_amount, vs.month, f.freelancer_name
+                               FROM vendor_submissions vs JOIN freelancers f ON f.id = vs.freelancer_id
+                               WHERE vs.submission_status = 'pending' ORDER BY vs.submitted_at ASC")->fetchAll();
+    foreach ($vendorRows as $r) {
+        $out[] = [
+            'type'    => 'vendor_submission',
+            'id'      => (int)$r['id'],
+            'title'   => '🧑‍💻 Vendor Invoice — ' . h($r['freelancer_name']),
+            'rows'    => [
+                ['Project', h($r['project_name'])],
+                ['Invoice #', h($r['invoice_number'] ?: '—')],
+                ['Amount', formatMoney($r['payment_amount'])],
+                ['Month', date('F Y', strtotime($r['month'].'-01'))],
+            ],
+        ];
+    }
+    $expenseRows = $db->query("SELECT id, requested_by, change_type, payload, created_at FROM expense_change_requests WHERE status = 'pending' ORDER BY created_at ASC")->fetchAll();
+    foreach ($expenseRows as $r) {
+        $p = json_decode($r['payload'], true) ?: [];
+        $label = ['add'=>'Add','edit'=>'Edit','delete'=>'Delete'][$r['change_type']] ?? $r['change_type'];
+        $out[] = [
+            'type'    => 'expense_request',
+            'id'      => (int)$r['id'],
+            'title'   => "💰 Expense {$label} Request — " . h($r['requested_by']),
+            'rows'    => $r['change_type'] === 'delete'
+                ? [['Action', 'Delete expense #' . (int)($p['expense_id'] ?? 0)]]
+                : [
+                    ['Category', h($p['expense_category'] ?? '—')],
+                    ['Client', h($p['client_name'] ?? 'Internal')],
+                    ['Amount', isset($p['total_billable']) ? formatMoney($p['total_billable']) : '—'],
+                  ],
+        ];
+    }
+    return $out;
+}
+
 // Approves a vendor_submissions row: records the freelance payment (unchanged existing
 // behavior), creates a matching Expense entry (category "Freelancer Costs") so it flows
 // into expense tracking/rebilling, and emails the vendor.

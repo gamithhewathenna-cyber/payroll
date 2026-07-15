@@ -5,47 +5,6 @@ require_once 'includes/vendor_approval.php';
 requireAdmin();
 $db = getDB();
 
-// Pending items awaiting approval via the chat popup: vendor invoice submissions
-// and staff-submitted expense requests. Surfaced automatically whenever the chat
-// page loads or a message is sent — see AGENTS note in the system prompt below.
-function getPendingApprovals($db) {
-    $out = [];
-    $vendorRows = $db->query("SELECT vs.id, vs.project_name, vs.invoice_number, vs.payment_amount, vs.month, f.freelancer_name
-                               FROM vendor_submissions vs JOIN freelancers f ON f.id = vs.freelancer_id
-                               WHERE vs.submission_status = 'pending' ORDER BY vs.submitted_at ASC")->fetchAll();
-    foreach ($vendorRows as $r) {
-        $out[] = [
-            'type'    => 'vendor_submission',
-            'id'      => (int)$r['id'],
-            'title'   => '🧑‍💻 Vendor Invoice — ' . h($r['freelancer_name']),
-            'rows'    => [
-                ['Project', h($r['project_name'])],
-                ['Invoice #', h($r['invoice_number'] ?: '—')],
-                ['Amount', formatMoney($r['payment_amount'])],
-                ['Month', date('F Y', strtotime($r['month'].'-01'))],
-            ],
-        ];
-    }
-    $expenseRows = $db->query("SELECT id, requested_by, change_type, payload, created_at FROM expense_change_requests WHERE status = 'pending' ORDER BY created_at ASC")->fetchAll();
-    foreach ($expenseRows as $r) {
-        $p = json_decode($r['payload'], true) ?: [];
-        $label = ['add'=>'Add','edit'=>'Edit','delete'=>'Delete'][$r['change_type']] ?? $r['change_type'];
-        $out[] = [
-            'type'    => 'expense_request',
-            'id'      => (int)$r['id'],
-            'title'   => "💰 Expense {$label} Request — " . h($r['requested_by']),
-            'rows'    => $r['change_type'] === 'delete'
-                ? [['Action', 'Delete expense #' . (int)($p['expense_id'] ?? 0)]]
-                : [
-                    ['Category', h($p['expense_category'] ?? '—')],
-                    ['Client', h($p['client_name'] ?? 'Internal')],
-                    ['Amount', isset($p['total_billable']) ? formatMoney($p['total_billable']) : '—'],
-                  ],
-        ];
-    }
-    return $out;
-}
-
 // ── AJAX: handle chat message ──────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat') {
     header('Content-Type: application/json');

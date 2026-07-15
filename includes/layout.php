@@ -1,5 +1,6 @@
 <?php
 // includes/layout.php — CSS & JS fully embedded, no external file dependencies
+require_once __DIR__ . '/vendor_approval.php';
 
 function getInlineStyles() {
     return <<<'CSS'
@@ -252,6 +253,52 @@ textarea { resize:vertical; min-height:80px; }
   .sidebar-footer { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
   .topbar { padding-top: env(safe-area-inset-top); height: calc(var(--topbar-h) + env(safe-area-inset-top)); }
 }
+
+/* ══════════════════════════════
+   FLOATING AI CHAT WIDGET
+══════════════════════════════ */
+.aiw-bubble { position:fixed; bottom:20px; right:20px; width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg,#7c3aed,#3b82f6); border:none; display:flex; align-items:center; justify-content:center; font-size:24px; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.35); z-index:500; -webkit-tap-highlight-color:transparent; }
+.aiw-bubble:hover { transform:scale(1.06); }
+.aiw-badge { position:absolute; top:-4px; right:-4px; background:var(--red); color:#fff; min-width:20px; height:20px; border-radius:10px; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; padding:0 5px; border:2px solid var(--bg); }
+.aiw-panel { position:fixed; bottom:20px; right:20px; width:360px; max-width:calc(100vw - 24px); height:520px; max-height:calc(100vh - 40px); background:var(--bg2); border:1px solid var(--border); border-radius:16px; box-shadow:0 12px 40px rgba(0,0,0,.5); display:none; flex-direction:column; overflow:hidden; z-index:500; }
+.aiw-panel.open { display:flex; }
+.aiw-header { background:linear-gradient(135deg,#7c3aed,#3b82f6); padding:12px 14px; display:flex; align-items:center; gap:8px; color:#fff; flex-shrink:0; }
+.aiw-header strong { flex:1; font-size:13.5px; }
+.aiw-header button { background:rgba(255,255,255,.15); border:none; color:#fff; width:26px; height:26px; border-radius:6px; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent; }
+.aiw-header button:hover { background:rgba(255,255,255,.28); }
+.aiw-messages { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; scroll-behavior:smooth; }
+.aiw-input-wrap { border-top:1px solid var(--border); padding:10px; display:flex; gap:6px; flex-shrink:0; }
+.aiw-input { flex:1; resize:none; background:var(--bg3); border:1px solid var(--border); color:var(--text); border-radius:9px; padding:8px 11px; font-family:'Poppins',sans-serif; font-size:12.5px; line-height:1.4; max-height:70px; }
+.aiw-input:focus { outline:none; border-color:var(--accent); }
+.aiw-send { background:var(--accent); color:#fff; border:none; border-radius:9px; padding:0 14px; cursor:pointer; font-size:13px; flex-shrink:0; }
+.aiw-send:hover { background:var(--accent2); }
+.aiw-msg { display:flex; gap:8px; max-width:92%; }
+.aiw-msg.user { align-self:flex-end; flex-direction:row-reverse; }
+.aiw-msg.assistant { align-self:flex-start; }
+.aiw-avatar { width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; flex-shrink:0; margin-top:2px; }
+.aiw-msg.user .aiw-avatar { background:var(--accent); }
+.aiw-msg.assistant .aiw-avatar { background:linear-gradient(135deg,#7c3aed,#3b82f6); }
+.aiw-bubble-body { padding:8px 11px; border-radius:11px; font-size:12.5px; line-height:1.55; }
+.aiw-msg.user .aiw-bubble-body { background:var(--accent); color:#fff; border-bottom-right-radius:3px; }
+.aiw-msg.assistant .aiw-bubble-body { background:var(--bg3); color:var(--text); border-bottom-left-radius:3px; }
+.aiw-bubble-body strong { font-weight:700; }
+.aiw-card { background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.2); border-radius:9px; padding:10px 12px; margin-top:6px; }
+.aiw-card.approval { border-color:rgba(245,166,35,.35); background:rgba(245,166,35,.08); }
+.aiw-card-title { font-weight:700; color:var(--accent); font-size:12px; margin-bottom:6px; }
+.aiw-card.approval .aiw-card-title { color:var(--yellow); }
+.aiw-card-row { display:flex; justify-content:space-between; padding:2px 0; font-size:11px; color:var(--text2); gap:8px; }
+.aiw-card-row strong { color:var(--text); text-align:right; }
+.aiw-btn-confirm { background:var(--green); color:#000; border:none; border-radius:6px; padding:6px 12px; font-size:11px; font-weight:700; cursor:pointer; margin-top:8px; }
+.aiw-btn-cancel { background:transparent; color:var(--text2); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:11px; cursor:pointer; margin-top:8px; margin-left:5px; }
+.aiw-btn-reject { color:var(--red); border-color:rgba(255,77,109,.3); }
+.aiw-result-ok { background:rgba(0,196,140,.1); border:1px solid rgba(0,196,140,.25); border-radius:7px; padding:7px 10px; margin-top:6px; font-size:11.5px; color:var(--green); }
+.aiw-result-err { background:rgba(255,77,109,.1); border:1px solid rgba(255,77,109,.25); border-radius:7px; padding:7px 10px; margin-top:6px; font-size:11.5px; color:var(--red); }
+.aiw-typing { display:flex; gap:3px; align-items:center; padding:4px 0; }
+.aiw-typing span { width:6px; height:6px; background:var(--text2); border-radius:50%; animation:aiwDot .9s infinite; }
+.aiw-typing span:nth-child(2) { animation-delay:.15s; }
+.aiw-typing span:nth-child(3) { animation-delay:.3s; }
+@keyframes aiwDot { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
+@media (max-width:480px) { .aiw-panel { width:calc(100vw - 24px); right:12px; bottom:12px; height:calc(100vh - 90px); } .aiw-bubble { bottom:16px; right:16px; } }
 CSS;
 }
 
@@ -317,6 +364,216 @@ function confirmDelete(msg) { return confirm(msg || 'Are you sure you want to de
 // Auto-dismiss flash
 const flash = document.querySelector('.flash-msg');
 if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 300); }, 3500);
+
+// ══ Floating AI Chat Widget ══
+(function() {
+    const bubble = document.getElementById('aiwBubble');
+    const panel  = document.getElementById('aiwPanel');
+    if (!bubble || !panel) return; // not rendered on this page (non-admin, or on chat.php itself)
+
+    const CHAT_URL   = window.AIW_SITE_URL + '/chat.php';
+    const HIST_KEY    = 'aiw_history';
+    const OPEN_KEY    = 'aiw_open';
+    const SHOWN_KEY   = 'aiw_shown_approvals';
+
+    let history = [];
+    try { history = JSON.parse(sessionStorage.getItem(HIST_KEY) || '[]'); } catch(e) { history = []; }
+    let shownApprovalIds;
+    try { shownApprovalIds = new Set(JSON.parse(sessionStorage.getItem(SHOWN_KEY) || '[]')); } catch(e) { shownApprovalIds = new Set(); }
+    let pending = null;
+
+    function saveHistory() { sessionStorage.setItem(HIST_KEY, JSON.stringify(history)); }
+    function saveShown() { sessionStorage.setItem(SHOWN_KEY, JSON.stringify([...shownApprovalIds])); }
+
+    function fmt(t) {
+        return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
+                .replace(/\n/g,'<br>');
+    }
+
+    function addMsg(role, html, extra) {
+        extra = extra || '';
+        const wrap = document.getElementById('aiwMessages');
+        const d = document.createElement('div');
+        d.className = 'aiw-msg ' + role;
+        d.innerHTML = `<div class="aiw-avatar">${role==='user'?'👤':'🤖'}</div><div class="aiw-bubble-body">${html}${extra}</div>`;
+        wrap.appendChild(d);
+        wrap.scrollTop = wrap.scrollHeight;
+        return d;
+    }
+
+    function showTyping() {
+        const wrap = document.getElementById('aiwMessages');
+        const d = document.createElement('div');
+        d.id = 'aiwTyping'; d.className = 'aiw-msg assistant';
+        d.innerHTML = '<div class="aiw-avatar">🤖</div><div class="aiw-bubble-body"><div class="aiw-typing"><span></span><span></span><span></span></div></div>';
+        wrap.appendChild(d); wrap.scrollTop = wrap.scrollHeight;
+    }
+    function hideTyping() { document.getElementById('aiwTyping')?.remove(); }
+
+    function buildCard(action) {
+        if (!action) return '';
+        const d = action.data || {};
+        const titles = {create_invoice:'📄 Create Invoice',create_expense:'💰 Add Expense',create_client:'🏢 Add Client',create_payroll:'👥 Process Payroll',get_report:'📊 Get Report'};
+        let rows = '';
+        if (action.action==='create_invoice') {
+            rows = `<div class="aiw-card-row"><span>Client</span><strong>${d.client_name||'—'}</strong></div>
+                    <div class="aiw-card-row"><span>Currency</span><strong>${d.currency||'LKR'}</strong></div>
+                    <div class="aiw-card-row"><span>Status</span><strong>${d.status||'draft'}</strong></div>`;
+        } else if (action.action==='create_expense') {
+            rows = `<div class="aiw-card-row"><span>Category</span><strong>${d.expense_category||'—'}</strong></div>
+                    <div class="aiw-card-row"><span>Amount</span><strong>${d.currency||'LKR'} ${parseFloat(d.cost_amount||0).toLocaleString('en',{minimumFractionDigits:2})}</strong></div>`;
+        } else if (action.action==='create_client') {
+            rows = `<div class="aiw-card-row"><span>Company</span><strong>${d.company_name||'—'}</strong></div>
+                    <div class="aiw-card-row"><span>Email</span><strong>${d.email||'—'}</strong></div>`;
+        } else if (action.action==='create_payroll') {
+            rows = `<div class="aiw-card-row"><span>Employee</span><strong>${d.employee_name||'—'}</strong></div>
+                    <div class="aiw-card-row"><span>Month</span><strong>${d.month||'—'}</strong></div>`;
+        }
+        return `<div class="aiw-card"><div class="aiw-card-title">${titles[action.action]||action.action}</div>${rows}<div><button class="aiw-btn-confirm" onclick="AIW.exec(this)">✅ Confirm</button><button class="aiw-btn-cancel" onclick="AIW.cancel(this)">Cancel</button></div></div>`;
+    }
+
+    function buildApprovalCard(item) {
+        const rows = item.rows.map(([label, val]) => `<div class="aiw-card-row"><span>${label}</span><strong>${val}</strong></div>`).join('');
+        return `<div class="aiw-card approval"><div class="aiw-card-title">${item.title}</div>${rows}<div>
+            <button class="aiw-btn-confirm" onclick="AIW.approve('${item.type}',${item.id},this)">✅ Approve</button>
+            <button class="aiw-btn-cancel aiw-btn-reject" onclick="AIW.reject('${item.type}',${item.id},this)">❌ Reject</button>
+          </div></div>`;
+    }
+
+    function updateBadge(count) {
+        const badge = document.getElementById('aiwBadge');
+        if (!badge || count === null || count === undefined) return;
+        if (count > 0) { badge.textContent = count; badge.style.display = 'flex'; }
+        else { badge.style.display = 'none'; }
+    }
+
+    function renderPendingApprovals(list) {
+        list = list || [];
+        list.forEach(item => {
+            const key = item.type + ':' + item.id;
+            if (shownApprovalIds.has(key)) return;
+            shownApprovalIds.add(key);
+            addMsg('assistant', '🔔 <strong>New approval needed</strong>', buildApprovalCard(item));
+        });
+        saveShown();
+        updateBadge(list.length);
+    }
+
+    async function sendMessage() {
+        const inp = document.getElementById('aiwInput');
+        const txt = inp.value.trim(); if (!txt) return;
+        inp.value = '';
+        addMsg('user', fmt(txt));
+        history.push({role:'user', content:txt});
+        saveHistory();
+        showTyping();
+        try {
+            const fd = new FormData();
+            fd.append('action','chat');
+            fd.append('messages', JSON.stringify(history));
+            const res  = await fetch(CHAT_URL, {method:'POST', body:fd});
+            const data = await res.json();
+            hideTyping();
+            if (data.error) {
+                addMsg('assistant', '❌ ' + fmt(data.error));
+                history.push({role:'assistant', content:data.error});
+                saveHistory();
+                return;
+            }
+            const reply = data.reply || '';
+            pending = data.action || null;
+            addMsg('assistant', fmt(reply), buildCard(pending));
+            history.push({role:'assistant', content:reply});
+            saveHistory();
+            renderPendingApprovals(data.pendingApprovals);
+        } catch(e) {
+            hideTyping();
+            addMsg('assistant', '❌ Network error. Please try again.');
+        }
+    }
+
+    async function execAction(btn) {
+        if (!pending) return;
+        const card = btn.closest('.aiw-card');
+        card?.querySelectorAll('button').forEach(b=>b.remove());
+        const snap = pending; pending = null;
+        showTyping();
+        try {
+            const fd = new FormData();
+            fd.append('action','execute');
+            fd.append('payload', JSON.stringify(snap));
+            const res  = await fetch(CHAT_URL, {method:'POST', body:fd});
+            const data = await res.json();
+            hideTyping();
+            const cls  = data.success ? 'aiw-result-ok' : 'aiw-result-err';
+            const link = data.link ? ` <a href="${data.link}" target="_blank" style="color:var(--accent)">View →</a>` : '';
+            addMsg('assistant', `<div class="${cls}">${fmt(data.message||'')}${link}</div>`);
+            history.push({role:'assistant', content: data.message||''});
+            saveHistory();
+        } catch(e) {
+            hideTyping();
+            addMsg('assistant','❌ Execution failed.');
+        }
+    }
+
+    function cancelAction(btn) {
+        pending = null;
+        const card = btn.closest('.aiw-card');
+        card?.querySelectorAll('button').forEach(b=>b.remove());
+        addMsg('assistant','Cancelled.');
+    }
+
+    async function runApproval(actionType, id, card, reason) {
+        try {
+            const fd = new FormData();
+            fd.append('action','execute');
+            fd.append('payload', JSON.stringify({action: actionType, data: {id, reason: reason||''}}));
+            const res  = await fetch(CHAT_URL, {method:'POST', body:fd});
+            const data = await res.json();
+            const cls  = data.success ? 'aiw-result-ok' : 'aiw-result-err';
+            const link = data.link ? ` <a href="${data.link}" target="_blank" style="color:var(--accent)">View →</a>` : '';
+            card.insertAdjacentHTML('afterend', `<div class="${cls}">${fmt(data.message||'')}${link}</div>`);
+            card.remove();
+        } catch(e) {
+            card.insertAdjacentHTML('afterend', `<div class="aiw-result-err">❌ Action failed.</div>`);
+        }
+    }
+    async function approveItem(type, id, btn) {
+        const card = btn.closest('.aiw-card');
+        card.querySelectorAll('button').forEach(b => b.disabled = true);
+        await runApproval(type === 'vendor_submission' ? 'approve_vendor_submission' : 'approve_expense_request', id, card);
+    }
+    async function rejectItem(type, id, btn) {
+        const reason = type === 'vendor_submission' ? (prompt('Reason for rejecting this invoice (optional):') || '') : '';
+        const card = btn.closest('.aiw-card');
+        card.querySelectorAll('button').forEach(b => b.disabled = true);
+        await runApproval(type === 'vendor_submission' ? 'reject_vendor_submission' : 'reject_expense_request', id, card, reason);
+    }
+
+    function openPanel() {
+        panel.classList.add('open');
+        bubble.style.display = 'none';
+        sessionStorage.setItem(OPEN_KEY, '1');
+        const wrap = document.getElementById('aiwMessages');
+        wrap.scrollTop = wrap.scrollHeight;
+    }
+    function minimizePanel() {
+        panel.classList.remove('open');
+        bubble.style.display = 'flex';
+        sessionStorage.setItem(OPEN_KEY, '0');
+    }
+    function toggle() { panel.classList.contains('open') ? minimizePanel() : openPanel(); }
+    function handleKey(e) { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+
+    // Restore prior conversation into the DOM (persisted across page navigations via sessionStorage)
+    history.forEach(m => addMsg(m.role, fmt(m.content)));
+    if (sessionStorage.getItem(OPEN_KEY) === '1') openPanel();
+
+    window.AIW = { toggle, minimize: minimizePanel, send: sendMessage, key: handleKey, exec: execAction, cancel: cancelAction, approve: approveItem, reject: rejectItem };
+
+    if (window.AIW_INITIAL_PENDING) renderPendingApprovals(window.AIW_INITIAL_PENDING);
+})();
 JS;
 }
 
@@ -437,10 +694,47 @@ HTML;
 
 function pageFooter() {
     $js = getInlineJS();
+    $siteUrl = SITE_URL;
+    $widgetHtml = '';
+
+    if (isAdmin() && basename($_SERVER['SCRIPT_NAME'] ?? '') !== 'chat.php') {
+        $db          = getDB();
+        $pending     = getPendingApprovals($db);
+        $count       = count($pending);
+        $pendingJson = json_encode($pending);
+        $siteUrlJson = json_encode($siteUrl);
+        $badgeStyle  = $count > 0 ? 'display:flex' : 'display:none';
+
+        $widgetHtml = <<<HTML
+<button class="aiw-bubble" id="aiwBubble" onclick="AIW.toggle()" aria-label="AI Assistant">
+  🤖
+  <span class="aiw-badge" id="aiwBadge" style="{$badgeStyle}">{$count}</span>
+</button>
+<div class="aiw-panel" id="aiwPanel">
+  <div class="aiw-header">
+    <span style="font-size:16px">🤖</span>
+    <strong>AI Assistant</strong>
+    <a href="{$siteUrl}/chat.php" style="background:rgba(255,255,255,.15);color:#fff;text-decoration:none;width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px" title="Open full page">⤢</a>
+    <button onclick="AIW.minimize()" title="Minimize">–</button>
+  </div>
+  <div class="aiw-messages" id="aiwMessages"></div>
+  <div class="aiw-input-wrap">
+    <textarea class="aiw-input" id="aiwInput" rows="1" placeholder="Ask me anything…" onkeydown="AIW.key(event)"></textarea>
+    <button class="aiw-send" onclick="AIW.send()">↑</button>
+  </div>
+</div>
+<script>
+window.AIW_SITE_URL = {$siteUrlJson};
+window.AIW_INITIAL_PENDING = {$pendingJson};
+</script>
+HTML;
+    }
+
     echo <<<HTML
     </div>
   </div>
 </div>
+{$widgetHtml}
 <script>{$js}</script>
 </body>
 </html>
