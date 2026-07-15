@@ -5,6 +5,90 @@ require_once 'includes/vendor_approval.php';
 requireAdmin();
 $db = getDB();
 
+// Read-only report/lookup actions — these run immediately (no confirm-card round trip),
+// since viewing a report can't change any data. Returns null if $type isn't one of these.
+function handleReadOnlyAction($db, $type, $d, $sym) {
+    if ($type === 'get_report') {
+        $m2 = $d['month'] ?? date('Y-m');
+        $r  = $db->prepare("SELECT COALESCE(SUM(total),0) FROM invoices WHERE DATE_FORMAT(issue_date,'%Y-%m')=? AND status!='cancelled' AND invoice_type='invoice'"); $r->execute([$m2]); $r=$r->fetchColumn();
+        $e  = $db->prepare("SELECT COALESCE(SUM(cost_amount),0) FROM expenses WHERE billing_month=? AND billing_type IN ('internal','client','shared')"); $e->execute([$m2]); $e=$e->fetchColumn();
+        $s  = $db->prepare("SELECT COALESCE(SUM(final_salary),0) FROM payroll WHERE month=?"); $s->execute([$m2]); $s=$s->fetchColumn();
+        $msg = "📊 **".date('F Y',strtotime($m2.'-01'))." Report**\n💰 Revenue: {$sym} ".number_format($r,2)."\n📊 Expenses: {$sym} ".number_format($e,2)."\n👥 Salaries: {$sym} ".number_format($s,2)."\n📈 Net Profit: {$sym} ".number_format($r-$e-$s,2);
+        return ['message' => $msg, 'link' => SITE_URL.'/reports.php'];
+    }
+
+    if ($type === 'get_expenses_by_client') {
+        $isAll = ($d['month'] ?? '') === 'all';
+        $m2    = $d['month'] ?? date('Y-m');
+        $sql   = "SELECT COALESCE(NULLIF(client_name,''),'Internal') as client, COUNT(*) as cnt,
+                         SUM(cost_amount*exchange_rate) as cost, SUM(total_billable) as billable
+                  FROM expenses" . ($isAll ? "" : " WHERE billing_month=?") . " GROUP BY client ORDER BY billable DESC";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($isAll ? [] : [$m2]);
+        $rows = $stmt->fetchAll();
+        $period = $isAll ? 'All Time' : date('F Y', strtotime($m2.'-01'));
+        if (!$rows) return ['message' => "No expenses found for {$period}.", 'link' => SITE_URL.'/expenses.php'];
+        $msg = "🧾 **Expenses by Client — {$period}**\n\n";
+        foreach ($rows as $row) {
+            $msg .= "**{$row['client']}** — {$sym} ".number_format($row['billable'],2)." billable ({$row['cnt']} expense".($row['cnt']==1?'':'s').", {$sym} ".number_format($row['cost'],2)." cost)\n";
+        }
+        return ['message' => trim($msg), 'link' => SITE_URL.'/expenses.php' . ($isAll ? '' : '?month='.$m2)];
+    }
+
+    if ($type === 'get_monthly_expenses') {
+        $m2 = $d['month'] ?? date('Y-m');
+        $t  = $db->prepare("SELECT
+                COALESCE(SUM(cost_amount*exchange_rate),0) as total_cost,
+                COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable ELSE 0 END),0) as total_billable,
+                COALESCE(SUM(CASE WHEN billing_type='internal' THEN cost_amount*exchange_rate ELSE 0 END),0) as internal_cost,
+                COUNT(*) as cnt
+              FROM expenses WHERE billing_month=?");
+        $t->execute([$m2]);
+        $t = $t->fetch();
+        $period = date('F Y', strtotime($m2.'-01'));
+        $msg = "💰 **Total Expenses — {$period}**\n\nTotal Cost: {$sym} ".number_format($t['total_cost'],2)."\nClient-Billable: {$sym} ".number_format($t['total_billable'],2)."\nInternal Costs: {$sym} ".number_format($t['internal_cost'],2)."\nRecords: {$t['cnt']}";
+        return ['message' => $msg, 'link' => SITE_URL.'/expenses.php?month='.$m2];
+    }
+
+    if ($type === 'get_pending_invoices') {
+        $rows = $db->query("SELECT i.invoice_number, i.total, i.due_date, i.status, c.company_name
+                             FROM invoices i JOIN clients c ON c.id=i.client_id
+                             WHERE i.invoice_type='invoice' AND i.status IN ('sent','overdue')
+                             ORDER BY i.due_date ASC")->fetchAll();
+        if (!$rows) return ['message' => "✅ No outstanding invoices — everything is paid up!", 'link' => SITE_URL.'/invoices.php'];
+        $total = array_sum(array_column($rows, 'total'));
+        $msg = "📋 **Outstanding Invoices** (".count($rows).", total {$sym} ".number_format($total,2).")\n\n";
+        foreach ($rows as $r) {
+            $due   = $r['due_date'] ? date('d M Y', strtotime($r['due_date'])) : '—';
+            $badge = $r['status'] === 'overdue' ? '⚠️ Overdue' : '📤 Sent';
+            $msg  .= "**{$r['invoice_number']}** — {$r['company_name']} — {$sym} ".number_format($r['total'],2)." — Due {$due} ({$badge})\n";
+        }
+        return ['message' => trim($msg), 'link' => SITE_URL.'/invoices.php'];
+    }
+
+    if ($type === 'get_bank_reference') {
+        $q = trim($d['query'] ?? '');
+        if (!$q) return ['message' => "Please tell me the invoice number, project, or freelancer name to look up.", 'link' => null];
+        $like = "%{$q}%";
+        $rows = $db->prepare("SELECT fp.invoice_number, fp.project_name, fp.payment_amount, fp.payment_date, fp.bank_reference, f.freelancer_name
+                               FROM freelance_payments fp JOIN freelancers f ON f.id=fp.freelancer_id
+                               WHERE fp.invoice_number LIKE ? OR fp.project_name LIKE ? OR f.freelancer_name LIKE ?
+                               ORDER BY fp.invoice_date DESC LIMIT 5");
+        $rows->execute([$like, $like, $like]);
+        $rows = $rows->fetchAll();
+        if (!$rows) return ['message' => "No payment found matching \"{$q}\".", 'link' => SITE_URL.'/freelance.php?tab=payments'];
+        $msg = "🏦 **Bank Reference Lookup — \"{$q}\"**\n\n";
+        foreach ($rows as $r) {
+            $ref = $r['bank_reference'] ?: 'Not set';
+            $paidDate = $r['payment_date'] ? date('d M Y', strtotime($r['payment_date'])) : '—';
+            $msg .= "**{$r['freelancer_name']}** — {$r['project_name']} ({$r['invoice_number']})\nAmount: {$sym} ".number_format($r['payment_amount'],2)." · Paid: {$paidDate} · Bank Ref: **{$ref}**\n\n";
+        }
+        return ['message' => trim($msg), 'link' => SITE_URL.'/freelance.php?tab=payments'];
+    }
+
+    return null;
+}
+
 // ── AJAX: handle chat message ──────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat') {
     header('Content-Type: application/json');
@@ -35,7 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat'
     $rateUSD     = getSetting('rate_usd_lkr', '325');
     $rateAUD     = getSetting('rate_aud_lkr', '215');
 
-    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, clients, payroll, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**ACTION TYPES:**\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_client — Add a new client\n4. create_payroll — Process payroll for an employee\n5. get_report — Query and show data\n6. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_client:** {\"action\":\"create_client\",\"data\":{\"company_name\":\"Ford Mustang\",\"contact_name\":\"John Smith\",\"email\":\"john@example.com\",\"phone\":\"+94 77 123 4567\",\"industry\":\"Automotive\",\"default_currency\":\"USD\"}}\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"type\":\"revenue\",\"month\":\"2026-06\"}}\n\n## Important Rules\n- Always confirm details before acting: show a summary and ask user to confirm\n- Every action you propose (invoice, expense, client, payroll) is shown to the admin as a card with Confirm/Cancel buttons — nothing is ever written to the database until they click Confirm. Never claim you've already created something; say you're proposing it for approval.\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Separately from anything you propose, the system automatically surfaces pending vendor invoice submissions and staff expense requests as approval cards whenever the admin opens or uses this chat — you don't need to check for these yourself, just be aware they may appear and can explain them if asked\n- Be concise and friendly";
+    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, clients, payroll, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**WRITE ACTIONS** (create/change something — always shown to the admin as a card with Confirm/Cancel buttons first; nothing is saved until they click Confirm):\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_client — Add a new client to the portal, with all their details\n4. create_payroll — Process payroll for an employee\n\n**READ-ONLY REPORT/LOOKUP ACTIONS** (these run immediately and show results right away — no confirmation needed, since viewing data can't change anything):\n5. get_report — Overall monthly summary (revenue, expenses, salaries, profit)\n6. get_expenses_by_client — Expenses grouped by client, with totals and a link to details\n7. get_monthly_expenses — Total expenses for a given month (cost, client-billable, internal)\n8. get_pending_invoices — List every outstanding (sent/overdue) invoice\n9. get_bank_reference — Look up the bank reference for a freelance payment by invoice number, project, or freelancer name\n\n10. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_client:** {\"action\":\"create_client\",\"data\":{\"company_name\":\"Ford Mustang\",\"contact_name\":\"John Smith\",\"email\":\"john@example.com\",\"phone\":\"+94 77 123 4567\",\"address\":\"123 Main St\",\"address_line2\":\"\",\"city\":\"Colombo\",\"country\":\"Sri Lanka\",\"vat_number\":\"\",\"industry\":\"Automotive\",\"notes\":\"\",\"default_currency\":\"USD\"}} — ask for whichever of these the admin hasn't given you before proposing it, but company_name is the only truly required field\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"month\":\"2026-06\"}}\n\n**get_expenses_by_client:** {\"action\":\"get_expenses_by_client\",\"data\":{\"month\":\"2026-06\"}} — use \\\"month\\\":\\\"all\\\" if the admin wants all-time instead of one month\n\n**get_monthly_expenses:** {\"action\":\"get_monthly_expenses\",\"data\":{\"month\":\"2026-06\"}}\n\n**get_pending_invoices:** {\"action\":\"get_pending_invoices\",\"data\":{}}\n\n**get_bank_reference:** {\"action\":\"get_bank_reference\",\"data\":{\"query\":\"INV-2026-0004\"}} — query can be an invoice number, project name, or freelancer name\n\n## Important Rules\n- For WRITE actions: always confirm details before acting — show a summary and ask the admin to confirm. Never claim you've already created something; say you're proposing it for approval.\n- For READ-ONLY report/lookup actions: just include the JSON block, the system fills in and displays the actual data automatically — you don't need to fetch or state the numbers yourself\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Separately from anything you propose, the system automatically surfaces pending vendor invoice submissions and staff expense requests as approval cards whenever the admin opens or uses this chat — you don't need to check for these yourself, just be aware they may appear and can explain them if asked\n- Be concise and friendly";
 
     // ── cURL API call (works on cPanel shared hosting) ──
     $payload = json_encode([
@@ -89,7 +173,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat'
         $text = trim(preg_replace('/```json\s*\{.*?\}\s*```/s', '', $text));
     }
 
-    echo json_encode(['reply' => $text, 'action' => $actionData, 'pendingApprovals' => getPendingApprovals($db)]);
+    // Read-only report/lookup actions run immediately — no confirm card needed
+    $reportLink = null;
+    if ($actionData) {
+        $readOnly = handleReadOnlyAction($db, $actionData['action'] ?? '', $actionData['data'] ?? [], getSetting('currency_symbol','Rs.'));
+        if ($readOnly !== null) {
+            $text = trim($text . "\n\n" . $readOnly['message']);
+            $reportLink = $readOnly['link'];
+            $actionData = null;
+        }
+    }
+
+    echo json_encode(['reply' => $text, 'action' => $actionData, 'link' => $reportLink, 'pendingApprovals' => getPendingApprovals($db)]);
     exit;
 }
 
@@ -152,10 +247,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
         } elseif ($type === 'create_client') {
             $name = trim($d['company_name'] ?? '');
             if (!$name) throw new Exception('Company name is required.');
-            $db->prepare("INSERT INTO clients (company_name,contact_name,email,phone,industry,status,default_currency) VALUES (?,?,?,?,?,'active',?)")
-               ->execute([$name, trim($d['contact_name']??''), trim($d['email']??''), trim($d['phone']??''), trim($d['industry']??''), $d['default_currency']??'LKR']);
+            $db->prepare("INSERT INTO clients (company_name,contact_name,email,phone,address,address_line2,city,country,vat_number,industry,status,notes,default_currency) VALUES (?,?,?,?,?,?,?,?,?,?,'active',?,?)")
+               ->execute([
+                   $name, trim($d['contact_name']??''), trim($d['email']??''), trim($d['phone']??''),
+                   trim($d['address']??''), trim($d['address_line2']??''), trim($d['city']??''), trim($d['country']??'Sri Lanka'),
+                   trim($d['vat_number']??''), trim($d['industry']??''), trim($d['notes']??''), $d['default_currency']??'LKR',
+               ]);
             $cid = $db->lastInsertId();
-            echo json_encode(['success'=>true,'message'=>"✅ Client **{$name}** added.",'link'=>SITE_URL.'/clients.php']);
+            echo json_encode(['success'=>true,'message'=>"✅ Client **{$name}** added to the portal.",'link'=>SITE_URL.'/clients.php']);
 
         } elseif ($type === 'approve_vendor_submission') {
             $result = approveVendorSubmission($db, (int)($d['id']??0), 'AI Assistant');
@@ -206,12 +305,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
                ->execute([$emp['id'],$month2,$base,$bonus,$deduct,$advance,$allow,$comm,$final,$d['payment_method']??'bank_transfer',$d['notes']??'']);
             echo json_encode(['success'=>true,'message'=>"✅ Payroll processed for **{$emp['full_name']}** — Final: {$sym} ".number_format($final,2),'link'=>SITE_URL.'/payroll.php']);
 
-        } elseif ($type === 'get_report') {
-            $m2  = $d['month']??date('Y-m');
-            $r   = $db->prepare("SELECT COALESCE(SUM(total),0) FROM invoices WHERE DATE_FORMAT(issue_date,'%Y-%m')=? AND status!='cancelled' AND invoice_type='invoice'"); $r->execute([$m2]); $r=$r->fetchColumn();
-            $e   = $db->prepare("SELECT COALESCE(SUM(cost_amount),0) FROM expenses WHERE billing_month=? AND billing_type IN ('internal','client','shared')"); $e->execute([$m2]); $e=$e->fetchColumn();
-            $s   = $db->prepare("SELECT COALESCE(SUM(final_salary),0) FROM payroll WHERE month=?"); $s->execute([$m2]); $s=$s->fetchColumn();
-            echo json_encode(['success'=>true,'message'=>"📊 **".date('F Y',strtotime($m2.'-01'))." Report**\n💰 Revenue: {$sym} ".number_format($r,2)."\n📊 Expenses: {$sym} ".number_format($e,2)."\n👥 Salaries: {$sym} ".number_format($s,2)."\n📈 Net Profit: {$sym} ".number_format($r-$e-$s,2)]);
+        } elseif (($readOnly = handleReadOnlyAction($db, $type, $d, $sym)) !== null) {
+            // Safety net: report/lookup types normally run inline during the chat turn
+            // (see handleReadOnlyAction() call above), but handle them here too in case
+            // this endpoint is ever hit directly with one of these action types.
+            echo json_encode(['success'=>true,'message'=>$readOnly['message'],'link'=>$readOnly['link']]);
         } else {
             echo json_encode(['success'=>false,'message'=>'Unknown action.']);
         }
@@ -473,7 +571,8 @@ async function sendMessage() {
 
         const reply = data.reply || '';
         pending = data.action || null;
-        addMsg('assistant', fmt(reply), buildCard(pending));
+        const linkHtml = data.link ? `<div style="margin-top:8px"><a href="${data.link}" target="_blank" style="color:var(--accent)">View →</a></div>` : '';
+        addMsg('assistant', fmt(reply), linkHtml + buildCard(pending));
         history.push({role:'assistant', content:reply});
         renderPendingApprovals(data.pendingApprovals);
     } catch(e) {

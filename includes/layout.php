@@ -527,7 +527,8 @@ if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.
             }
             const reply = data.reply || '';
             pending = data.action || null;
-            addMsg('assistant', fmt(reply), buildCard(pending));
+            const linkHtml = data.link ? `<div style="margin-top:6px"><a href="${data.link}" target="_blank" style="color:var(--accent)">View →</a></div>` : '';
+            addMsg('assistant', fmt(reply), linkHtml + buildCard(pending));
             history.push({role:'assistant', content:reply});
             saveHistory();
             renderPendingApprovals(data.pendingApprovals);
