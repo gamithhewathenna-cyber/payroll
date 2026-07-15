@@ -374,16 +374,18 @@ if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.
     const CHAT_URL   = window.AIW_SITE_URL + '/chat.php';
     const HIST_KEY    = 'aiw_history';
     const OPEN_KEY    = 'aiw_open';
-    const SHOWN_KEY   = 'aiw_shown_approvals';
 
     let history = [];
     try { history = JSON.parse(sessionStorage.getItem(HIST_KEY) || '[]'); } catch(e) { history = []; }
-    let shownApprovalIds;
-    try { shownApprovalIds = new Set(JSON.parse(sessionStorage.getItem(SHOWN_KEY) || '[]')); } catch(e) { shownApprovalIds = new Set(); }
+    // Deliberately NOT persisted across page loads: approval cards themselves aren't saved into
+    // `history`, so on a fresh page load the DOM has none of them yet. This set only needs to
+    // dedupe within the current page view (e.g. an item already shown on load, then echoed back
+    // in a later sendMessage() response) — if it persisted, an item shown once would be silently
+    // marked "seen" forever and never redrawn on the next page, even though it's still pending.
+    let shownApprovalIds = new Set();
     let pending = null;
 
     function saveHistory() { sessionStorage.setItem(HIST_KEY, JSON.stringify(history)); }
-    function saveShown() { sessionStorage.setItem(SHOWN_KEY, JSON.stringify([...shownApprovalIds])); }
 
     function fmt(t) {
         return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -456,7 +458,6 @@ if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.
             shownApprovalIds.add(key);
             addMsg('assistant', '🔔 <strong>New approval needed</strong>', buildApprovalCard(item));
         });
-        saveShown();
         updateBadge(list.length);
     }
 
