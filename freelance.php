@@ -23,8 +23,9 @@ if ($action === 'mark_paid' && $id) {
     $stmt = $db->prepare("SELECT fp.*, f.freelancer_name, f.email FROM freelance_payments fp JOIN freelancers f ON f.id=fp.freelancer_id WHERE fp.id=?");
     $stmt->execute([$id]);
     $row = $stmt->fetch();
-    $paidDate = !empty($row['payment_date']) ? $row['payment_date'] : date('Y-m-d');
-    $db->prepare("UPDATE freelance_payments SET payment_status='paid', payment_date=? WHERE id=?")->execute([$paidDate, $id]);
+    $paidDate = !empty($_GET['payment_date']) ? $_GET['payment_date'] : (!empty($row['payment_date']) ? $row['payment_date'] : date('Y-m-d'));
+    $bankRef  = trim($_GET['bank_ref'] ?? '') ?: null;
+    $db->prepare("UPDATE freelance_payments SET payment_status='paid', payment_date=?, bank_reference=? WHERE id=?")->execute([$paidDate, $bankRef, $id]);
 
     // Send payment confirmation email
     if ($row && $row['email']) {
@@ -67,6 +68,7 @@ if ($action === 'mark_paid' && $id) {
         $emailBody .= '<div class="row"><span class="lbl">Period</span><span class="val">'.$period.'</span></div>';
         $emailBody .= '<div class="row"><span class="lbl">Payment Date</span><span class="val">'.$paidDateFmt.'</span></div>';
         $emailBody .= '<div class="row"><span class="lbl">Method</span><span class="val">'.ucwords(str_replace('_',' ',$row['payment_method'])).'</span></div>';
+        if ($bankRef) $emailBody .= '<div class="row"><span class="lbl">Bank Ref.</span><span class="val">'.htmlspecialchars($bankRef).'</span></div>';
         $emailBody .= '</div>';
         $emailBody .= '<div class="total"><span class="lbl">Amount Paid</span><span class="val">'.$sym2.' '.number_format($invAmt,2).'</span></div>';
         $emailBody .= '<p style="font-size:13px;color:#666;text-align:center">Please check your bank account. Contact us if you have any questions.</p>';
@@ -298,8 +300,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
-        $db->prepare("INSERT INTO freelance_payments (freelancer_id,project_name,invoice_number,invoice_date,payment_amount,payment_method,payment_status,month,notes,invoice_file,invoice_file_name) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-           ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$d['payment_amount'],$d['payment_method'],$d['payment_status'],$d['month'],trim($d['notes']),$invoiceFile,$invoiceOrigName]);
+        $db->prepare("INSERT INTO freelance_payments (freelancer_id,project_name,invoice_number,invoice_date,payment_amount,payment_method,payment_status,month,notes,invoice_file,invoice_file_name,bank_reference) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+           ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$d['payment_amount'],$d['payment_method'],$d['payment_status'],$d['month'],trim($d['notes']),$invoiceFile,$invoiceOrigName,trim($d['bank_reference']??'') ?: null]);
         if ($d['payment_status'] === 'paid') {
             $lid = $db->lastInsertId();
             $db->prepare("UPDATE freelance_payments SET payment_date=CURDATE() WHERE id=?")->execute([$lid]);
@@ -336,12 +338,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        $bankRef = trim($d['bank_reference']??'') ?: null;
         if ($invoiceFile) {
-            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=?,invoice_file=?,invoice_file_name=? WHERE id=?")
-               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$invoiceFile,$invoiceOrigName,$id]);
+            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=?,invoice_file=?,invoice_file_name=?,bank_reference=? WHERE id=?")
+               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$invoiceFile,$invoiceOrigName,$bankRef,$id]);
         } else {
-            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=? WHERE id=?")
-               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$id]);
+            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=?,bank_reference=? WHERE id=?")
+               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$bankRef,$id]);
         }
         if ($d['payment_status'] === 'paid') {
             $db->prepare("UPDATE freelance_payments SET payment_date=CURDATE() WHERE id=? AND payment_date IS NULL")->execute([$id]);
@@ -524,6 +527,9 @@ pageHeader('Freelance Payroll');
                   <?php if ($p['payment_date']): ?>
                     <div style="font-size:11px;color:var(--green);margin-top:3px">📅 <?= date('d M Y', strtotime($p['payment_date'])) ?></div>
                   <?php endif; ?>
+                  <?php if (!empty($p['bank_reference'])): ?>
+                    <div style="font-size:11px;color:var(--text2);margin-top:1px">🏦 <?= h($p['bank_reference']) ?></div>
+                  <?php endif; ?>
                 <?php else: ?>
                   <span class="badge badge-yellow">Pending</span>
                 <?php endif; ?>
@@ -536,7 +542,7 @@ pageHeader('Freelance Payroll');
                 <?php endif; ?>
                 <a href="?action=edit_payment&id=<?= $p['id'] ?>&tab=payments&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm">Edit</a>
                 <?php if ($p['payment_status'] !== 'paid'): ?>
-                  <a href="?action=mark_paid&id=<?= $p['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-success btn-sm" onclick="return confirm('Mark as paid?')">✓</a>
+                  <button type="button" onclick="openMarkPaid(<?= $p['id'] ?>)" class="btn btn-success btn-sm">✓ Paid</button>
                 <?php endif; ?>
                 <a href="?action=delete_payment&id=<?= $p['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete this payment?')">Del</a>
               </div></td>
@@ -547,6 +553,46 @@ pageHeader('Freelance Payroll');
     </div>
   </div>
 </div>
+
+<!-- Mark as Paid Modal -->
+<div class="modal-overlay" id="markPaidModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <div class="modal-title">✓ Mark as Paid</div>
+      <button class="modal-close" onclick="closeModal('markPaidModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Payment Date *</label>
+        <input type="date" id="markPaidDate">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Bank Reference Code</label>
+        <input type="text" id="markPaidRef" placeholder="e.g. TXN123456789">
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-success" style="width:auto;padding:8px 20px" onclick="confirmMarkPaid()">✓ Confirm Paid</button>
+        <button class="btn btn-ghost" style="width:auto;padding:8px 20px;background:var(--bg3);color:var(--text2)" onclick="closeModal('markPaidModal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let markPaidId = null;
+function openMarkPaid(id) {
+    markPaidId = id;
+    document.getElementById('markPaidDate').value = new Date().toISOString().slice(0,10);
+    document.getElementById('markPaidRef').value = '';
+    openModal('markPaidModal');
+}
+function confirmMarkPaid() {
+    const date = document.getElementById('markPaidDate').value;
+    if (!date) { alert('Please select a payment date.'); return; }
+    const ref = encodeURIComponent(document.getElementById('markPaidRef').value || '');
+    window.location = `?action=mark_paid&id=${markPaidId}&month=<?= h($filterMonth) ?>&payment_date=${date}&bank_ref=${ref}`;
+}
+</script>
 
 <?php elseif ($tab === 'approvals'): ?>
 <!-- ═══════════════════════════════ APPROVALS TAB ═══════════════════════════════ -->
@@ -743,6 +789,7 @@ function confirmReject() {
               <option value="paid">Paid</option>
             </select>
           </div>
+          <div class="form-group"><label>Bank Reference Code</label><input type="text" name="bank_reference" placeholder="e.g. TXN123456789"></div>
           <div class="form-group full">
             <label>📎 Upload Invoice</label>
             <input type="file" name="invoice_file" accept=".pdf,.jpg,.jpeg,.png" style="padding:6px">
@@ -824,6 +871,7 @@ function confirmReject() {
             <input type="date" name="payment_date" value="<?= h($editPayment['payment_date'] ?? '') ?>">
             <span style="font-size:11px;color:var(--text2)">Set when payment was actually made</span>
           </div>
+          <div class="form-group"><label>Bank Reference Code</label><input type="text" name="bank_reference" value="<?= h($editPayment['bank_reference'] ?? '') ?>" placeholder="e.g. TXN123456789"></div>
           <div class="form-group full">
             <label>📎 Replace Invoice</label>
             <?php if ($editPayment['invoice_file']): ?>

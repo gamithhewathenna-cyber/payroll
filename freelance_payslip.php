@@ -67,6 +67,9 @@ pageHeader('Freelance Payment Slip');
         <?php if ($p['payment_date']): ?>
           <div style="font-size:12px;color:var(--text2);margin-top:2px">Paid: <strong style="color:var(--text)"><?= date('Y-m-d',strtotime($p['payment_date'])) ?></strong></div>
         <?php endif; ?>
+        <?php if (!empty($p['bank_reference'])): ?>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">Bank Ref: <strong style="color:var(--text)"><?= h($p['bank_reference']) ?></strong></div>
+        <?php endif; ?>
         <?php if ($p['invoice_number']): ?>
           <div style="font-size:12px;color:var(--text2);margin-top:2px">Ref: <strong style="color:var(--text)"><?= h($p['invoice_number']) ?></strong></div>
         <?php endif; ?>
@@ -91,6 +94,7 @@ pageHeader('Freelance Payment Slip');
         <?php if ($p['bank_name']): ?><div class="payslip-row"><span>Bank</span><span><?= h($p['bank_name']) ?></span></div><?php endif; ?>
         <?php if ($p['bank_account']): ?><div class="payslip-row"><span>Account No.</span><span><?= h($p['bank_account']) ?></span></div><?php endif; ?>
         <?php if ($p['bank_branch']): ?><div class="payslip-row"><span>Branch</span><span><?= h($p['bank_branch']) ?></span></div><?php endif; ?>
+        <?php if (!empty($p['bank_reference'])): ?><div class="payslip-row"><span>Bank Ref.</span><span><?= h($p['bank_reference']) ?></span></div><?php endif; ?>
         <?php if ($p['notes']): ?><div class="payslip-row"><span>Notes</span><span style="color:var(--text2)"><?= h($p['notes']) ?></span></div><?php endif; ?>
       </div>
     </div>
