@@ -259,6 +259,8 @@ textarea { resize:vertical; min-height:80px; }
 ══════════════════════════════ */
 .aiw-bubble { position:fixed; bottom:20px; right:20px; width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg,#7c3aed,#3b82f6); border:none; display:flex; align-items:center; justify-content:center; font-size:24px; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.35); z-index:500; -webkit-tap-highlight-color:transparent; }
 .aiw-bubble:hover { transform:scale(1.06); }
+.aiw-bubble.has-pending { animation:aiwPulse 2s ease-in-out infinite; }
+@keyframes aiwPulse { 0%,100% { box-shadow:0 6px 20px rgba(0,0,0,.35), 0 0 0 0 rgba(255,77,109,.5); } 50% { box-shadow:0 6px 20px rgba(0,0,0,.35), 0 0 0 8px rgba(255,77,109,0); } }
 .aiw-badge { position:absolute; top:-4px; right:-4px; background:var(--red); color:#fff; min-width:20px; height:20px; border-radius:10px; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; padding:0 5px; border:2px solid var(--bg); }
 .aiw-panel { position:fixed; bottom:20px; right:20px; width:360px; max-width:calc(100vw - 24px); height:520px; max-height:calc(100vh - 40px); background:var(--bg2); border:1px solid var(--border); border-radius:16px; box-shadow:0 12px 40px rgba(0,0,0,.5); display:none; flex-direction:column; overflow:hidden; z-index:500; }
 .aiw-panel.open { display:flex; }
@@ -375,6 +377,32 @@ if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.
     const HIST_KEY    = 'aiw_history';
     const OPEN_KEY    = 'aiw_open';
 
+    // Notification chime — generated with Web Audio API so no audio file/asset is needed.
+    // Browsers block audio before any user interaction, so we lazily create the AudioContext
+    // on the first click/keypress anywhere on the page and just skip the chime silently if
+    // that hasn't happened yet (e.g. an approval already appears on initial page load).
+    let audioCtx = null;
+    function unlockAudio() { if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {} } }
+    document.addEventListener('click', unlockAudio, { once: true });
+    document.addEventListener('keydown', unlockAudio, { once: true });
+    function playChime() {
+        if (!audioCtx) return;
+        if (audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
+        const now = audioCtx.currentTime;
+        [880, 1174.66].forEach((freq, i) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0, now + i*0.12);
+            gain.gain.linearRampToValueAtTime(0.15, now + i*0.12 + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + i*0.12 + 0.28);
+            osc.connect(gain).connect(audioCtx.destination);
+            osc.start(now + i*0.12);
+            osc.stop(now + i*0.12 + 0.3);
+        });
+    }
+
     let history = [];
     try { history = JSON.parse(sessionStorage.getItem(HIST_KEY) || '[]'); } catch(e) { history = []; }
     // Deliberately NOT persisted across page loads: approval cards themselves aren't saved into
@@ -383,6 +411,13 @@ if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.
     // in a later sendMessage() response) — if it persisted, an item shown once would be silently
     // marked "seen" forever and never redrawn on the next page, even though it's still pending.
     let shownApprovalIds = new Set();
+    // This one DOES persist — it gates the notification chime, not the card display, so a
+    // still-pending item only ever dings once per browser session instead of on every page
+    // navigation. New items (not seen before in this session) still ding every time.
+    const NOTIFIED_KEY = 'aiw_notified_approvals';
+    let notifiedApprovalIds;
+    try { notifiedApprovalIds = new Set(JSON.parse(sessionStorage.getItem(NOTIFIED_KEY) || '[]')); } catch(e) { notifiedApprovalIds = new Set(); }
+    function saveNotified() { sessionStorage.setItem(NOTIFIED_KEY, JSON.stringify([...notifiedApprovalIds])); }
     let pending = null;
 
     function saveHistory() { sessionStorage.setItem(HIST_KEY, JSON.stringify(history)); }
@@ -446,19 +481,27 @@ if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.
     function updateBadge(count) {
         const badge = document.getElementById('aiwBadge');
         if (!badge || count === null || count === undefined) return;
-        if (count > 0) { badge.textContent = count; badge.style.display = 'flex'; }
-        else { badge.style.display = 'none'; }
+        if (count > 0) { badge.textContent = count; badge.style.display = 'flex'; bubble.classList.add('has-pending'); }
+        else { badge.style.display = 'none'; bubble.classList.remove('has-pending'); }
     }
 
     function renderPendingApprovals(list) {
         list = list || [];
+        let shouldChime = false;
         list.forEach(item => {
             const key = item.type + ':' + item.id;
-            if (shownApprovalIds.has(key)) return;
-            shownApprovalIds.add(key);
-            addMsg('assistant', '🔔 <strong>New approval needed</strong>', buildApprovalCard(item));
+            if (!shownApprovalIds.has(key)) {
+                shownApprovalIds.add(key);
+                addMsg('assistant', '🔔 <strong>New approval needed</strong>', buildApprovalCard(item));
+            }
+            if (!notifiedApprovalIds.has(key)) {
+                notifiedApprovalIds.add(key);
+                shouldChime = true;
+            }
         });
+        if (list.length) saveNotified();
         updateBadge(list.length);
+        if (shouldChime) playChime();
     }
 
     async function sendMessage() {

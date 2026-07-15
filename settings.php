@@ -66,6 +66,13 @@ if ($action === 'ai_settings') {
     header('Location: '.SITE_URL.'/settings.php#ai'); exit;
 }
 
+if ($action === 'approval_reminders') {
+    saveSetting($db, 'approval_reminders_enabled', isset($_POST['approval_reminders_enabled']) ? '1' : '0');
+    clearSettingsCache();
+    setFlash('success', 'Approval reminder settings saved.');
+    header('Location: '.SITE_URL.'/settings.php#ai'); exit;
+}
+
 if ($action === 'logo') {
     if (!empty($_FILES['logo']['name'])) {
         $ext = strtolower(pathinfo($_FILES['logo']['name'], PATHINFO_EXTENSION));
@@ -107,6 +114,7 @@ pageHeader('Settings');
   <a href="#rates">💱 Exchange Rates</a>
   <a href="#logo">🖼 Logo</a>
   <a href="#ai">🤖 AI Assistant</a>
+  <a href="#approval-reminders">🔔 Approvals</a>
 </div>
 
 <!-- ── COMPANY INFO ─────────────────────────────────────── -->
@@ -264,6 +272,24 @@ pageHeader('Settings');
       </div>
     </div>
     <div class="form-actions"><button type="submit" class="btn btn-primary">Save AI Settings</button></div>
+  </form>
+</div>
+
+<!-- ── APPROVAL REMINDERS ────────────────────────────────── -->
+<div class="card settings-section" id="approval-reminders">
+  <div class="card-title">🔔 Approval Reminders</div>
+  <p style="font-size:13px;color:var(--text2);margin-bottom:16px">If vendor invoice submissions or staff expense requests are still waiting for your approval, a reminder email is sent to all super admins on weekday mornings (requires a cron job — see <code>send_approval_reminders.php</code>).</p>
+  <form method="POST">
+    <input type="hidden" name="action" value="approval_reminders">
+    <div class="form-grid">
+      <div class="form-group full">
+        <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" name="approval_reminders_enabled" <?= ($s['approval_reminders_enabled']??'1')==='1'?'checked':'' ?> style="width:16px;height:16px">
+          Email me a reminder on weekday mornings if anything is still awaiting approval
+        </label>
+      </div>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Save Reminder Settings</button></div>
   </form>
 </div>
 
