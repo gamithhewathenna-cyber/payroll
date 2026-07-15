@@ -55,6 +55,34 @@ if ($action === 'get_expenses') {
     exit;
 }
 
+// AJAX: suggest line items from a client's most recent invoice (for the "New Invoice" screen)
+if ($action === 'get_recent_items') {
+    header('Content-Type: application/json');
+    $cid       = (int)($_GET['client_id'] ?? 0);
+    $excludeId = (int)($_GET['exclude_id'] ?? 0);
+    if (!$cid) { echo json_encode(['invoice_number' => null, 'items' => []]); exit; }
+
+    $invStmt = $db->prepare("SELECT id, invoice_number FROM invoices WHERE client_id=? AND id!=? ORDER BY issue_date DESC, id DESC LIMIT 1");
+    $invStmt->execute([$cid, $excludeId]);
+    $recent = $invStmt->fetch();
+    if (!$recent) { echo json_encode(['invoice_number' => null, 'items' => []]); exit; }
+
+    $itemsStmt = $db->prepare("SELECT description, quantity, unit_price FROM invoice_items WHERE invoice_id=? AND item_type='service' ORDER BY sort_order");
+    $itemsStmt->execute([$recent['id']]);
+    $out = [];
+    foreach ($itemsStmt->fetchAll() as $r) {
+        $parts = explode('|||', $r['description'], 2);
+        $out[] = [
+            'desc'    => trim($parts[0]),
+            'subdesc' => isset($parts[1]) ? trim($parts[1]) : '',
+            'qty'     => (float)$r['quantity'],
+            'price'   => (float)$r['unit_price'],
+        ];
+    }
+    echo json_encode(['invoice_number' => $recent['invoice_number'], 'items' => $out]);
+    exit;
+}
+
 // Generate invoice number
 function nextInvoiceNumber($db, $type = 'invoice') {
     $prefix = getSetting($type === 'invoice' ? 'invoice_prefix' : 'quote_prefix', $type === 'invoice' ? 'INV' : 'QUO');

@@ -393,6 +393,16 @@ $invRate    = $id ? (float)($inv['inv_rate']??1) : 1;
 
     <div id="syncNotice" style="display:none;background:rgba(0,196,140,.1);border:1px solid rgba(0,196,140,.3);color:var(--green);padding:8px 12px;border-radius:6px;font-size:12.5px;margin-bottom:10px"></div>
 
+    <?php if (!$id): ?>
+    <div id="suggestPanel" style="display:none;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:var(--accent)" id="suggestTitle">💡 Suggested items</div>
+        <button type="button" onclick="document.getElementById('suggestPanel').style.display='none'" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px">Dismiss All</button>
+      </div>
+      <div id="suggestList" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+    <?php endif; ?>
+
     <div style="overflow-x:auto">
     <table class="line-items-table" style="min-width:580px">
       <thead>
@@ -574,6 +584,8 @@ function setClientMode(mode) {
         // Clear client dropdown selection
         const sel = document.getElementById('invClient');
         if (sel) sel.value = '';
+        const suggestPanel = document.getElementById('suggestPanel');
+        if (suggestPanel) suggestPanel.style.display = 'none';
     } else {
         if (existing) existing.style.display = '';
         if (manual)   manual.style.display   = 'none';
@@ -593,6 +605,44 @@ function onClientChange() {
         updateCurrencyRate();
     }
     autoSyncIfReady();
+    loadSuggestions(cid);
+}
+
+// ── Suggested items from this client's most recent invoice ──
+let lastSuggestions = [];
+function loadSuggestions(clientId) {
+    const panel = document.getElementById('suggestPanel');
+    if (!panel) return; // only rendered on the "New Invoice" screen
+    if (!clientId) { panel.style.display = 'none'; return; }
+    fetch(`${siteUrl}/invoices.php?action=get_recent_items&client_id=${clientId}`)
+        .then(r => r.json())
+        .then(data => { lastSuggestions = data.items || []; renderSuggestions(data.invoice_number); })
+        .catch(() => { panel.style.display = 'none'; });
+}
+function renderSuggestions(sourceInvNo) {
+    const panel = document.getElementById('suggestPanel');
+    const list  = document.getElementById('suggestList');
+    if (!panel || !list) return;
+    if (!lastSuggestions.length) { panel.style.display = 'none'; return; }
+    const esc = s => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    document.getElementById('suggestTitle').textContent = `💡 Suggested items — from ${sourceInvNo || 'last invoice'}`;
+    list.innerHTML = lastSuggestions.map((it, i) => `
+        <div class="suggest-chip" data-idx="${i}" style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px">
+            <div style="flex:1;min-width:0">
+                <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.desc)}</div>
+                <div style="font-size:11px;color:var(--text2)">Qty ${it.qty} × ${sym} ${parseFloat(it.price).toLocaleString('en',{minimumFractionDigits:2})}</div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" style="padding:4px 10px;font-size:11px" onclick="addSuggestion(${i})">+ Add</button>
+            <button type="button" onclick="this.closest('.suggest-chip').remove()" style="background:transparent;border:none;color:var(--text2);cursor:pointer;font-size:14px;padding:2px 4px" title="Dismiss suggestion">×</button>
+        </div>
+    `).join('');
+    panel.style.display = '';
+}
+function addSuggestion(idx) {
+    const it = lastSuggestions[idx];
+    if (!it) return;
+    addItem(it.desc, it.subdesc, it.qty, it.price);
+    document.querySelector(`.suggest-chip[data-idx="${idx}"]`)?.remove();
 }
 
 function calcLine(input) {
@@ -641,7 +691,10 @@ function calcTotals() {
 }
 
 let itemCount = <?= max(count($invItems),1) ?>;
-function addItem() {
+function addItem(desc, subdesc, qty, price) {
+    const prefilled = desc !== undefined;
+    desc = desc || ''; subdesc = subdesc || ''; qty = qty !== undefined ? qty : 1; price = price !== undefined ? price : 0;
+    const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     itemCount++;
     const tbody = document.getElementById('lineItems');
     // Remove separator temporarily, re-add after
@@ -654,12 +707,12 @@ function addItem() {
             <input type="hidden" name="item_type[]" value="service">
             <input type="hidden" name="item_exp_id[]" value="0">
             <div class="li-desc">
-                <input class="li-desc-main" name="item_desc[]" placeholder="Service / Item name">
-                <input class="li-desc-sub" name="item_subdesc[]" placeholder="Description (optional)">
+                <input class="li-desc-main" name="item_desc[]" value="${esc(desc)}" placeholder="Service / Item name">
+                <input class="li-desc-sub" name="item_subdesc[]" value="${esc(subdesc)}" placeholder="Description (optional)">
             </div>
         </td>
-        <td><input class="li-num" name="item_qty[]" type="number" step="0.01" value="1" oninput="calcLine(this)"></td>
-        <td><input class="li-num" name="item_price[]" type="number" step="0.01" value="0" oninput="calcLine(this)"></td>
+        <td><input class="li-num" name="item_qty[]" type="number" step="0.01" value="${qty}" oninput="calcLine(this)"></td>
+        <td><input class="li-num" name="item_price[]" type="number" step="0.01" value="${price}" oninput="calcLine(this)"></td>
         <td class="li-amt">${sym} 0.00</td>
         <td><button type="button" onclick="this.closest('tr').remove();calcTotals()" style="background:var(--red);border:none;color:#fff;border-radius:5px;width:24px;height:24px;cursor:pointer;font-size:14px;line-height:1">×</button></td>`;
     // Insert before separator or at end
@@ -667,8 +720,8 @@ function addItem() {
     const sepRow   = [...tbody.querySelectorAll('tr')].find(r => r.querySelector('.sep-line'));
     if (sepRow) tbody.insertBefore(tr, sepRow);
     else tbody.appendChild(tr);
-    tr.querySelector('.li-desc-main').focus();
-    calcTotals();
+    calcLine(tr.querySelector('[name="item_price[]"]'));
+    if (!prefilled) tr.querySelector('.li-desc-main').focus();
 }
 
 function autoSyncIfReady() {
