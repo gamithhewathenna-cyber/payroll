@@ -451,9 +451,13 @@ if (flash) setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.
     function buildCard(action) {
         if (!action) return '';
         const d = action.data || {};
-        const titles = {create_invoice:'📄 Create Invoice',create_expense:'💰 Add Expense',create_client:'🏢 Add Client',create_payroll:'👥 Process Payroll',get_report:'📊 Get Report'};
+        const titles = {create_invoice:'📄 Create Invoice',create_expense:'💰 Add Expense',create_client:'🏢 Add Client',create_payroll:'👥 Process Payroll',mark_invoice_paid:'✅ Mark Invoice Paid',get_report:'📊 Get Report'};
         let rows = '';
-        if (action.action==='create_invoice') {
+        if (action.action==='mark_invoice_paid') {
+            rows = `<div class="aiw-card-row"><span>Client</span><strong>${d.client_name||'—'}</strong></div>
+                    <div class="aiw-card-row"><span>Invoice #</span><strong>${d.invoice_number||'—'}</strong></div>
+                    <div class="aiw-card-row"><span>Month</span><strong>${d.month||'—'}</strong></div>`;
+        } else if (action.action==='create_invoice') {
             rows = `<div class="aiw-card-row"><span>Client</span><strong>${d.client_name||'—'}</strong></div>
                     <div class="aiw-card-row"><span>Currency</span><strong>${d.currency||'LKR'}</strong></div>
                     <div class="aiw-card-row"><span>Status</span><strong>${d.status||'draft'}</strong></div>`;
