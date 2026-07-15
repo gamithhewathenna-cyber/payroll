@@ -440,6 +440,7 @@ pageHeader('Freelance Payroll');
     <button type="submit" class="btn btn-ghost btn-sm">Filter</button>
   </form>
   <div style="display:flex;gap:8px">
+    <a href="<?= SITE_URL ?>/freelance_payment_report.php" class="btn btn-ghost">📄 Payment Report</a>
     <?php if (!empty($freelancers)): ?>
       <button class="btn btn-primary" onclick="openModal('addPaymentModal')">+ Add Payment</button>
     <?php else: ?>
