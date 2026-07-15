@@ -555,6 +555,11 @@ pageHeader('Freelance Payroll');
 </div>
 
 <!-- Mark as Paid Modal -->
+<style>
+/* Keep this one modal centered on all screen sizes, overriding the site-wide mobile bottom-sheet style */
+#markPaidModal { align-items: center !important; }
+#markPaidModal .modal { border-radius: 14px !important; max-height: 90vh !important; }
+</style>
 <div class="modal-overlay" id="markPaidModal">
   <div class="modal" style="max-width:420px">
     <div class="modal-header">
