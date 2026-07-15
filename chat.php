@@ -1,8 +1,50 @@
 <?php
 require_once 'config.php';
 require_once 'includes/layout.php';
+require_once 'includes/vendor_approval.php';
 requireAdmin();
 $db = getDB();
+
+// Pending items awaiting approval via the chat popup: vendor invoice submissions
+// and staff-submitted expense requests. Surfaced automatically whenever the chat
+// page loads or a message is sent — see AGENTS note in the system prompt below.
+function getPendingApprovals($db) {
+    $out = [];
+    $vendorRows = $db->query("SELECT vs.id, vs.project_name, vs.invoice_number, vs.payment_amount, vs.month, f.freelancer_name
+                               FROM vendor_submissions vs JOIN freelancers f ON f.id = vs.freelancer_id
+                               WHERE vs.submission_status = 'pending' ORDER BY vs.submitted_at ASC")->fetchAll();
+    foreach ($vendorRows as $r) {
+        $out[] = [
+            'type'    => 'vendor_submission',
+            'id'      => (int)$r['id'],
+            'title'   => '🧑‍💻 Vendor Invoice — ' . h($r['freelancer_name']),
+            'rows'    => [
+                ['Project', h($r['project_name'])],
+                ['Invoice #', h($r['invoice_number'] ?: '—')],
+                ['Amount', formatMoney($r['payment_amount'])],
+                ['Month', date('F Y', strtotime($r['month'].'-01'))],
+            ],
+        ];
+    }
+    $expenseRows = $db->query("SELECT id, requested_by, change_type, payload, created_at FROM expense_change_requests WHERE status = 'pending' ORDER BY created_at ASC")->fetchAll();
+    foreach ($expenseRows as $r) {
+        $p = json_decode($r['payload'], true) ?: [];
+        $label = ['add'=>'Add','edit'=>'Edit','delete'=>'Delete'][$r['change_type']] ?? $r['change_type'];
+        $out[] = [
+            'type'    => 'expense_request',
+            'id'      => (int)$r['id'],
+            'title'   => "💰 Expense {$label} Request — " . h($r['requested_by']),
+            'rows'    => $r['change_type'] === 'delete'
+                ? [['Action', 'Delete expense #' . (int)($p['expense_id'] ?? 0)]]
+                : [
+                    ['Category', h($p['expense_category'] ?? '—')],
+                    ['Client', h($p['client_name'] ?? 'Internal')],
+                    ['Amount', isset($p['total_billable']) ? formatMoney($p['total_billable']) : '—'],
+                  ],
+        ];
+    }
+    return $out;
+}
 
 // ── AJAX: handle chat message ──────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat') {
@@ -34,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat'
     $rateUSD     = getSetting('rate_usd_lkr', '325');
     $rateAUD     = getSetting('rate_aud_lkr', '215');
 
-    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, payroll, clients, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**ACTION TYPES:**\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_payroll — Process payroll for an employee\n4. get_report — Query and show data\n5. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"type\":\"revenue\",\"month\":\"2026-06\"}}\n\n## Important Rules\n- Always confirm details before acting: show a summary and ask user to confirm\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Be concise and friendly";
+    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, clients, payroll, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**ACTION TYPES:**\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_client — Add a new client\n4. create_payroll — Process payroll for an employee\n5. get_report — Query and show data\n6. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_client:** {\"action\":\"create_client\",\"data\":{\"company_name\":\"Ford Mustang\",\"contact_name\":\"John Smith\",\"email\":\"john@example.com\",\"phone\":\"+94 77 123 4567\",\"industry\":\"Automotive\",\"default_currency\":\"USD\"}}\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"type\":\"revenue\",\"month\":\"2026-06\"}}\n\n## Important Rules\n- Always confirm details before acting: show a summary and ask user to confirm\n- Every action you propose (invoice, expense, client, payroll) is shown to the admin as a card with Confirm/Cancel buttons — nothing is ever written to the database until they click Confirm. Never claim you've already created something; say you're proposing it for approval.\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Separately from anything you propose, the system automatically surfaces pending vendor invoice submissions and staff expense requests as approval cards whenever the admin opens or uses this chat — you don't need to check for these yourself, just be aware they may appear and can explain them if asked\n- Be concise and friendly";
 
     // ── cURL API call (works on cPanel shared hosting) ──
     $payload = json_encode([
@@ -88,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat'
         $text = trim(preg_replace('/```json\s*\{.*?\}\s*```/s', '', $text));
     }
 
-    echo json_encode(['reply' => $text, 'action' => $actionData]);
+    echo json_encode(['reply' => $text, 'action' => $actionData, 'pendingApprovals' => getPendingApprovals($db)]);
     exit;
 }
 
@@ -148,6 +190,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
                ->execute([$d['expense_date'],$d['billing_month'],$d['client_name']??null,$d['billing_type']??'internal',$d['expense_category'],$d['description']??'',$cost,$cur,$rate,$markup,$fee,$total]);
             echo json_encode(['success'=>true,'message'=>"✅ Expense added — **{$d['expense_category']}** {$cur} ".number_format($cost,2)." → Billable {$sym} ".number_format($total,2),'link'=>SITE_URL.'/expenses.php']);
 
+        } elseif ($type === 'create_client') {
+            $name = trim($d['company_name'] ?? '');
+            if (!$name) throw new Exception('Company name is required.');
+            $db->prepare("INSERT INTO clients (company_name,contact_name,email,phone,industry,status,default_currency) VALUES (?,?,?,?,?,'active',?)")
+               ->execute([$name, trim($d['contact_name']??''), trim($d['email']??''), trim($d['phone']??''), trim($d['industry']??''), $d['default_currency']??'LKR']);
+            $cid = $db->lastInsertId();
+            echo json_encode(['success'=>true,'message'=>"✅ Client **{$name}** added.",'link'=>SITE_URL.'/clients.php']);
+
+        } elseif ($type === 'approve_vendor_submission') {
+            $result = approveVendorSubmission($db, (int)($d['id']??0), 'AI Assistant');
+            echo json_encode(['success'=>$result['success'],'message'=>($result['success']?'✅ ':'❌ ').$result['message'],'link'=>$result['success']?SITE_URL.'/expenses.php':null]);
+
+        } elseif ($type === 'reject_vendor_submission') {
+            $result = rejectVendorSubmission($db, (int)($d['id']??0), $d['reason']??'', 'AI Assistant');
+            echo json_encode(['success'=>$result['success'],'message'=>($result['success']?'✅ ':'❌ ').$result['message']]);
+
+        } elseif ($type === 'approve_expense_request') {
+            $reqId = (int)($d['id']??0);
+            $req = $db->prepare("SELECT * FROM expense_change_requests WHERE id=? AND status='pending'");
+            $req->execute([$reqId]);
+            $req = $req->fetch();
+            if (!$req) throw new Exception('Request not found or already reviewed.');
+            $p = json_decode($req['payload'], true) ?: [];
+            if ($req['change_type'] === 'add') {
+                $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
+                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name']??'',$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$req['requested_by'],'AI Assistant']);
+            } elseif ($req['change_type'] === 'edit') {
+                $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
+                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name']??'',$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,'AI Assistant',$req['expense_id']]);
+            } elseif ($req['change_type'] === 'delete') {
+                $db->prepare("DELETE FROM expenses WHERE id=?")->execute([$req['expense_id']]);
+            }
+            $db->prepare("UPDATE expense_change_requests SET status='approved', reviewed_at=NOW() WHERE id=?")->execute([$reqId]);
+            echo json_encode(['success'=>true,'message'=>'✅ Expense request approved and applied.','link'=>SITE_URL.'/expenses.php']);
+
+        } elseif ($type === 'reject_expense_request') {
+            $reqId = (int)($d['id']??0);
+            $db->prepare("UPDATE expense_change_requests SET status='rejected', reviewed_at=NOW() WHERE id=? AND status='pending'")->execute([$reqId]);
+            echo json_encode(['success'=>true,'message'=>'✅ Expense request rejected.']);
+
         } elseif ($type === 'create_payroll') {
             $empStmt = $db->prepare("SELECT * FROM employees WHERE full_name LIKE ? AND status='active'");
             $empStmt->execute(['%'.$d['employee_name'].'%']);
@@ -185,6 +267,7 @@ $hasApiKey = !empty(getSetting('anthropic_api_key', ''));
 $month     = date('Y-m');
 $rev       = $db->prepare("SELECT COALESCE(SUM(total),0) FROM invoices WHERE DATE_FORMAT(issue_date,'%Y-%m')=? AND status!='cancelled' AND invoice_type='invoice'"); $rev->execute([$month]); $rev=$rev->fetchColumn();
 $sal       = $db->prepare("SELECT COALESCE(SUM(final_salary),0) FROM payroll WHERE month=?"); $sal->execute([$month]); $sal=$sal->fetchColumn();
+$initialPending = getPendingApprovals($db);
 
 pageHeader('AI Assistant');
 ?>
@@ -242,7 +325,8 @@ pageHeader('AI Assistant');
         <div class="msg-avatar">🤖</div>
         <div class="msg-bubble">
           <strong>Hi! I'm your AI assistant for <?= h(getSetting('company_name','Creative Elements')) ?>.</strong><br><br>
-          I can create invoices, log expenses, process payroll, and pull reports — all through natural language. Your manual workflow is unchanged.<br><br>
+          I can create invoices, log expenses, add clients, process payroll, and pull reports — all through natural language. Every action I propose shows up as a card for you to confirm before anything is saved. Your manual workflow is unchanged.<br><br>
+          I'll also automatically flag pending vendor invoice submissions and staff expense requests here for you to approve or reject.<br><br>
           <?php if (!$hasApiKey): ?>⚠️ <em>Add your API key in Settings to activate me.</em><?php else: ?>Try asking me something! 👇<?php endif; ?>
         </div>
       </div>
@@ -263,6 +347,7 @@ pageHeader('AI Assistant');
       <?php foreach ([
         "📄 Create invoice for [client] USD 500 for content management June 2026",
         "💰 Add Facebook Ads expense for [client] USD 35, 15% markup",
+        "🏢 Add a new client called [company name]",
         "👤 Process payroll for [employee] June 2026",
         "📊 Show me this month's revenue and expenses",
         "📋 Create a quotation for a new website",
@@ -327,7 +412,7 @@ function hideTyping() { document.getElementById('typing')?.remove(); }
 function buildCard(action) {
     if (!action) return '';
     const d = action.data || {};
-    const titles = {create_invoice:'📄 Create Invoice',create_expense:'💰 Add Expense',create_payroll:'👥 Process Payroll',get_report:'📊 Get Report'};
+    const titles = {create_invoice:'📄 Create Invoice',create_expense:'💰 Add Expense',create_client:'🏢 Add Client',create_payroll:'👥 Process Payroll',get_report:'📊 Get Report'};
     let rows = '';
     if (action.action==='create_invoice') {
         rows = `<div class="action-row"><span>Client</span><strong>${d.client_name||'—'}</strong></div>
@@ -340,12 +425,69 @@ function buildCard(action) {
                 <div class="action-row"><span>Client</span><strong>${d.client_name||'Internal'}</strong></div>
                 <div class="action-row"><span>Amount</span><strong>${d.currency||'LKR'} ${parseFloat(d.cost_amount||0).toLocaleString('en',{minimumFractionDigits:2})}</strong></div>
                 <div class="action-row"><span>Markup</span><strong>${d.markup_percentage||0}%</strong></div>`;
+    } else if (action.action==='create_client') {
+        rows = `<div class="action-row"><span>Company</span><strong>${d.company_name||'—'}</strong></div>
+                <div class="action-row"><span>Contact</span><strong>${d.contact_name||'—'}</strong></div>
+                <div class="action-row"><span>Email</span><strong>${d.email||'—'}</strong></div>
+                <div class="action-row"><span>Currency</span><strong>${d.default_currency||'LKR'}</strong></div>`;
     } else if (action.action==='create_payroll') {
         rows = `<div class="action-row"><span>Employee</span><strong>${d.employee_name||'—'}</strong></div>
                 <div class="action-row"><span>Month</span><strong>${d.month||'—'}</strong></div>
                 <div class="action-row"><span>Bonus</span><strong>${d.bonus||0}</strong></div>`;
     }
-    return `<div class="action-card"><div class="action-title">${titles[action.action]||action.action}</div>${rows}<div><button class="btn-confirm" onclick="execAction()">✅ Confirm & Execute</button><button class="btn-cancel-ai" onclick="cancelAction()">Cancel</button></div></div>`;
+    return `<div class="action-card"><div class="action-title">${titles[action.action]||action.action}</div>${rows}<div><button class="btn-confirm" onclick="execAction(this)">✅ Confirm & Execute</button><button class="btn-cancel-ai" onclick="cancelAction(this)">Cancel</button></div></div>`;
+}
+
+// ── Pending approvals: vendor invoice submissions & staff expense requests ──
+// Surfaced automatically on page load and after every message, per admin's choice.
+const shownApprovalIds = new Set();
+function buildApprovalCard(item) {
+    const key = item.type + ':' + item.id;
+    const rows = item.rows.map(([label, val]) => `<div class="action-row"><span>${label}</span><strong>${val}</strong></div>`).join('');
+    return `<div class="action-card" style="border-color:rgba(245,166,35,.35);background:rgba(245,166,35,.06)">
+        <div class="action-title" style="color:var(--yellow)">${item.title}</div>
+        ${rows}
+        <div>
+          <button class="btn-confirm" onclick="execApproval('${item.type}',${item.id},this)">✅ Approve</button>
+          <button class="btn-cancel-ai" style="color:var(--red);border-color:rgba(255,77,109,.3)" onclick="execReject('${item.type}',${item.id},this)">❌ Reject</button>
+        </div>
+      </div>`;
+}
+function renderPendingApprovals(list) {
+    (list || []).forEach(item => {
+        const key = item.type + ':' + item.id;
+        if (shownApprovalIds.has(key)) return;
+        shownApprovalIds.add(key);
+        addMsg('assistant', '🔔 <strong>New approval needed</strong>', buildApprovalCard(item));
+    });
+}
+async function execApproval(type, id, btn) {
+    const card = btn.closest('.action-card');
+    card.querySelectorAll('button').forEach(b => b.disabled = true);
+    const actionType = type === 'vendor_submission' ? 'approve_vendor_submission' : 'approve_expense_request';
+    await runApprovalAction(actionType, id, card);
+}
+async function execReject(type, id, btn) {
+    const reason = type === 'vendor_submission' ? (prompt('Reason for rejecting this invoice (optional):') || '') : '';
+    const card = btn.closest('.action-card');
+    card.querySelectorAll('button').forEach(b => b.disabled = true);
+    const actionType = type === 'vendor_submission' ? 'reject_vendor_submission' : 'reject_expense_request';
+    await runApprovalAction(actionType, id, card, reason);
+}
+async function runApprovalAction(actionType, id, card, reason='') {
+    try {
+        const fd = new FormData();
+        fd.append('action','execute');
+        fd.append('payload', JSON.stringify({action: actionType, data: {id, reason}}));
+        const res  = await fetch(location.href, {method:'POST', body:fd});
+        const data = await res.json();
+        const cls  = data.success ? 'result-ok' : 'result-err';
+        const link = data.link ? ` <a href="${data.link}" target="_blank">View →</a>` : '';
+        card.insertAdjacentHTML('afterend', `<div class="${cls}">${fmt(data.message||'')}${link}</div>`);
+        card.remove();
+    } catch (e) {
+        card.insertAdjacentHTML('afterend', `<div class="result-err">❌ Action failed. Please try again or use the manual page.</div>`);
+    }
 }
 
 async function sendMessage() {
@@ -374,15 +516,17 @@ async function sendMessage() {
         pending = data.action || null;
         addMsg('assistant', fmt(reply), buildCard(pending));
         history.push({role:'assistant', content:reply});
+        renderPendingApprovals(data.pendingApprovals);
     } catch(e) {
         hideTyping();
         addMsg('assistant', '❌ Network error. Please try again.');
     }
 }
 
-async function execAction() {
+async function execAction(btn) {
     if (!pending) return;
-    document.querySelectorAll('.btn-confirm,.btn-cancel-ai').forEach(b=>b.remove());
+    const card = btn ? btn.closest('.action-card') : document.querySelector('.action-card:last-of-type');
+    card?.querySelectorAll('.btn-confirm,.btn-cancel-ai').forEach(b=>b.remove());
     const snap = pending; pending = null;
     showTyping();
     try {
@@ -402,11 +546,16 @@ async function execAction() {
     }
 }
 
-function cancelAction() {
+function cancelAction(btn) {
     pending = null;
-    document.querySelectorAll('.btn-confirm,.btn-cancel-ai').forEach(b=>b.remove());
+    const card = btn ? btn.closest('.action-card') : document.querySelector('.action-card:last-of-type');
+    card?.querySelectorAll('.btn-confirm,.btn-cancel-ai').forEach(b=>b.remove());
     addMsg('assistant','Cancelled. Let me know if you need anything else.');
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    renderPendingApprovals(<?= json_encode($initialPending) ?>);
+});
 </script>
 
 <?php pageFooter(); ?>

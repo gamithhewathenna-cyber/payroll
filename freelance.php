@@ -1,6 +1,7 @@
 <?php
 require_once 'config.php';
 require_once 'includes/layout.php';
+require_once 'includes/vendor_approval.php';
 requireAdmin();
 $db = getDB();
 
@@ -146,110 +147,13 @@ X-Mailer: PHP/" . phpversion();
     header('Location: ' . SITE_URL . '/freelance.php?tab=payments&month=' . ($_GET['month'] ?? date('Y-m'))); exit;
 }
 if ($action === 'approve_submission' && $id) {
-    $stmt = $db->prepare("SELECT vs.*, f.freelancer_name, f.email FROM vendor_submissions vs JOIN freelancers f ON f.id=vs.freelancer_id WHERE vs.id=?");
-    $stmt->execute([$id]);
-    $sub = $stmt->fetch();
-    if ($sub) {
-        $db->prepare("INSERT INTO freelance_payments (freelancer_id,project_name,invoice_number,invoice_date,payment_amount,payment_method,payment_status,month,invoice_file,invoice_file_name) VALUES (?,?,?,?,?,'bank_transfer','pending',?,?,?)")
-           ->execute([$sub['freelancer_id'],$sub['project_name'],$sub['invoice_number'],$sub['invoice_date'],$sub['payment_amount'],$sub['month'],$sub['invoice_file'],$sub['invoice_file_name']]);
-        $db->prepare("UPDATE vendor_submissions SET submission_status='approved', reviewed_at=NOW(), reviewed_by=? WHERE id=?")
-           ->execute([$_SESSION['full_name'], $id]);
-        // Send approval email
-        if ($sub['email']) {
-            $companyName = getSetting('company_name', SITE_NAME);
-            $fromEmail   = getSetting('email_from') ?: 'payroll@creativelements.co';
-            $period      = date('F Y', strtotime($sub['month'].'-01'));
-            $invNum      = $sub['invoice_number'];
-            $amount      = formatMoney($sub['payment_amount']);
-            $msgId       = '<'.time().'.'.md5($sub['email']).'@creativelements.co>';
-            $emailBody   = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px}
-.wrap{max-width:580px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1)}
-.header{background:#1a1f2e;padding:28px 32px;text-align:center}
-.header h1{color:#fff;margin:0 0 4px;font-size:20px}
-.header p{color:rgba(255,255,255,.6);margin:0;font-size:13px}
-.badge{background:#00c48c;color:#fff;display:inline-block;padding:8px 24px;border-radius:30px;font-size:15px;font-weight:700;margin:24px auto}
-.body{padding:28px 32px}
-.msg{font-size:15px;line-height:1.7;color:#444;margin-bottom:24px}
-.box{background:#f8f8f8;border-radius:8px;padding:18px 22px;margin-bottom:20px}
-.row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #eee;font-size:14px}
-.row:last-child{border-bottom:none}
-.lbl{color:#888}.val{font-weight:600;color:#222}
-.notice{background:#fff8e1;border-left:4px solid #f5a623;padding:12px 16px;border-radius:4px;font-size:13px;color:#666}
-.footer{background:#f8f8f8;padding:16px 32px;text-align:center;font-size:12px;color:#aaa;border-top:1px solid #eee}
-</style></head><body><div class="wrap">
-<div class="header"><h1>'.htmlspecialchars($companyName).'</h1><p>Vendor Invoice Notification</p></div>
-<div class="body">
-<div style="text-align:center"><span class="badge">✅ Invoice Approved</span></div>
-<p class="msg">Dear <strong>'.htmlspecialchars($sub['freelancer_name']).'</strong>,<br><br>
-Great news! Your invoice has been <strong style="color:#00c48c">approved</strong> by our accounts team.<br>
-Your payment will be processed and ready soon. We will notify you once the payment has been made.</p>
-<div class="box">
-<div class="row"><span class="lbl">Invoice Number</span><span class="val">'.htmlspecialchars($invNum).'</span></div>
-<div class="row"><span class="lbl">Project</span><span class="val">'.htmlspecialchars($sub['project_name']).'</span></div>
-<div class="row"><span class="lbl">Amount</span><span class="val" style="color:#00c48c">'.$amount.'</span></div>
-<div class="row"><span class="lbl">Period</span><span class="val">'.$period.'</span></div>
-<div class="row"><span class="lbl">Status</span><span class="val" style="color:#00c48c">✅ Approved — Payment Pending</span></div>
-</div>
-<div class="notice">💡 If you have any questions about your payment, please contact our accounts team.</div>
-</div>
-<div class="footer">'.htmlspecialchars($companyName).' · This is an automated notification.</div>
-</div></body></html>';
-            $subject  = "Invoice Approved: {$invNum} | {$companyName}";
-            $headers  = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: {$companyName} <{$fromEmail}>\r\n";
-            $ccEmail = getCCEmail();
-            if ($ccEmail) $headers .= "Cc: {$ccEmail}\r\n";
-            $headers .= "Reply-To: {$fromEmail}\r\nMessage-ID: {$msgId}\r\nDate: ".date('r')."\r\nX-Mailer: PHP/".phpversion();
-            mail($sub['email'], $subject, $emailBody, $headers, "-f{$fromEmail}");
-        }
-        setFlash('success', 'Invoice approved and added to payroll.' . ($sub['email'] ? ' Approval email sent to vendor.' : ''));
-    }
+    $result = approveVendorSubmission($db, $id, $_SESSION['full_name']);
+    setFlash($result['success'] ? 'success' : 'error', $result['message']);
     header('Location: ' . SITE_URL . '/freelance.php?tab=approvals'); exit;
 }
 if ($action === 'reject_submission' && $id) {
-    $reason = trim($_GET['reason'] ?? 'Rejected by admin.');
-    $stmt   = $db->prepare("SELECT vs.*, f.freelancer_name, f.email FROM vendor_submissions vs JOIN freelancers f ON f.id=vs.freelancer_id WHERE vs.id=?");
-    $stmt->execute([$id]);
-    $sub = $stmt->fetch();
-    $db->prepare("UPDATE vendor_submissions SET submission_status='rejected', rejection_reason=?, reviewed_at=NOW(), reviewed_by=? WHERE id=?")
-       ->execute([$reason, $_SESSION['full_name'], $id]);
-    // Send rejection email
-    if ($sub && $sub['email']) {
-        $companyName = getSetting('company_name', SITE_NAME);
-        $fromEmail   = getSetting('email_from') ?: 'payroll@creativelements.co';
-        $invNum      = $sub['invoice_number'];
-        $msgId       = '<'.time().'.'.md5($sub['email']).'@creativelements.co>';
-        $emailBody   = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px}
-.wrap{max-width:580px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1)}
-.header{background:#1a1f2e;padding:28px 32px;text-align:center}
-.header h1{color:#fff;margin:0 0 4px;font-size:20px}
-.header p{color:rgba(255,255,255,.6);margin:0;font-size:13px}
-.badge{background:#ff4d6d;color:#fff;display:inline-block;padding:8px 24px;border-radius:30px;font-size:15px;font-weight:700;margin:24px auto}
-.body{padding:28px 32px}
-.msg{font-size:15px;line-height:1.7;color:#444;margin-bottom:20px}
-.reason{background:#fff0f3;border-left:4px solid #ff4d6d;padding:14px 18px;border-radius:4px;font-size:14px;color:#c0392b;margin-bottom:20px}
-.notice{background:#fff8e1;border-left:4px solid #f5a623;padding:12px 16px;border-radius:4px;font-size:13px;color:#666}
-.footer{background:#f8f8f8;padding:16px 32px;text-align:center;font-size:12px;color:#aaa;border-top:1px solid #eee}
-</style></head><body><div class="wrap">
-<div class="header"><h1>'.htmlspecialchars($companyName).'</h1><p>Vendor Invoice Notification</p></div>
-<div class="body">
-<div style="text-align:center"><span class="badge">❌ Invoice Not Approved</span></div>
-<p class="msg">Dear <strong>'.htmlspecialchars($sub['freelancer_name']).'</strong>,<br><br>
-Unfortunately, your invoice <strong>'.htmlspecialchars($invNum).'</strong> could not be approved at this time.</p>
-<div class="reason"><strong>Reason:</strong> '.htmlspecialchars($reason).'</div>
-<div class="notice">💡 Please review the reason above, make the necessary corrections, and resubmit through the vendor portal. If you need help, contact our accounts team.</div>
-</div>
-<div class="footer">'.htmlspecialchars($companyName).' · This is an automated notification.</div>
-</div></body></html>';
-        $subject  = "Invoice Update: {$invNum} | {$companyName}";
-        $headers  = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: {$companyName} <{$fromEmail}>\r\n";
-        $ccEmail = getCCEmail();
-            if ($ccEmail) $headers .= "Cc: {$ccEmail}\r\n";
-        $headers .= "Reply-To: {$fromEmail}\r\nMessage-ID: {$msgId}\r\nDate: ".date('r')."\r\nX-Mailer: PHP/".phpversion();
-        mail($sub['email'], $subject, $emailBody, $headers, "-f{$fromEmail}");
-    }
-    setFlash('success', 'Invoice rejected.' . ($sub && $sub['email'] ? ' Rejection email sent to vendor.' : ''));
+    $result = rejectVendorSubmission($db, $id, $_GET['reason'] ?? '', $_SESSION['full_name']);
+    setFlash($result['success'] ? 'success' : 'error', $result['message']);
     header('Location: ' . SITE_URL . '/freelance.php?tab=approvals'); exit;
 }
 if ($action === 'delete_submission' && $id) {
@@ -664,7 +568,7 @@ $reviewedSubs = array_filter($allSubs, fn($s) => $s['submission_status'] !== 'pe
             </td>
             <td style="font-size:11px;color:var(--text2)"><?= date('d M Y H:i', strtotime($s['submitted_at'])) ?></td>
             <td data-label=""><div class="mob-actions">
-              <a href="?action=approve_submission&id=<?= $s['id'] ?>" class="btn btn-success btn-sm" onclick="return confirm('Approve and add to payroll?')">✅ Approve</a>
+              <a href="?action=approve_submission&id=<?= $s['id'] ?>" class="btn btn-success btn-sm" onclick="return confirm('Approve, add to payroll, and record as an expense?')">✅ Approve</a>
               <button onclick="openReject(<?= $s['id'] ?>)" class="btn btn-danger btn-sm">❌ Reject</button>
             </td>
           </tr>
