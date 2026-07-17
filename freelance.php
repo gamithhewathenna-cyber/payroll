@@ -699,7 +699,6 @@ function confirmReject() {
               <option value="paid">Paid</option>
             </select>
           </div>
-          <div class="form-group"><label>Bank Reference Code</label><input type="text" name="bank_reference" placeholder="e.g. TXN123456789"></div>
           <div class="form-group full">
             <label>📎 Upload Invoice</label>
             <input type="file" name="invoice_file" accept=".pdf,.jpg,.jpeg,.png" style="padding:6px">
