@@ -441,7 +441,6 @@ pageHeader('Freelance Payroll');
               </td>
               <td data-label=""><div class="mob-actions">
                 <a href="<?= SITE_URL ?>/freelance_payslip.php?id=<?= $p['id'] ?>" class="btn btn-ghost btn-sm">Payslip</a>
-                <a href="<?= SITE_URL ?>/send_freelance_payslip.php?id=<?= $p['id'] ?>" class="btn btn-ghost btn-sm" onclick="return confirm('Send payslip to <?= h($p['freelancer_name']) ?>?')" <?= !$p['email'] ? 'style="opacity:.4;pointer-events:none"title="No email set"' : '' ?>>📧 Send Slip</a>
                 <?php if (($p['advance_amount']??0) > 0 && ($p['advance_amount']??0) < $p['payment_amount']): ?>
                   <a href="?action=send_advance_notice&id=<?= $p['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm" style="color:var(--yellow)" onclick="return confirm('Send advance payment notification to <?= h($p['freelancer_name']) ?>?')" <?= !$p['email'] ? 'style="opacity:.4;pointer-events:none"title="No email set"' : '' ?>>💸 Advance</a>
                 <?php endif; ?>
