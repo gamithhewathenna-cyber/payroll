@@ -241,8 +241,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
             $type2    = $d['invoice_type'] ?? 'invoice';
             $prefix   = getSetting($type2==='invoice'?'invoice_prefix':'quote_prefix', $type2==='invoice'?'INV':'QUO');
             $year     = date('Y');
-            $count    = $db->query("SELECT COUNT(*) FROM invoices WHERE invoice_type='{$type2}' AND YEAR(issue_date)={$year}")->fetchColumn();
-            $invNo    = $prefix.'-'.$year.'-'.str_pad($count+1,4,'0',STR_PAD_LEFT);
+            $numStmt  = $db->prepare("SELECT invoice_number FROM invoices WHERE invoice_type=? AND invoice_number LIKE ?");
+            $numStmt->execute([$type2, $prefix.'-'.$year.'-%']);
+            $max = 0;
+            foreach ($numStmt->fetchAll(PDO::FETCH_COLUMN) as $num) {
+                $n = (int)substr(strrchr($num, '-'), 1);
+                if ($n > $max) $max = $n;
+            }
+            $invNo    = $prefix.'-'.$year.'-'.str_pad($max+1,4,'0',STR_PAD_LEFT);
 
             $subtotal = 0; $items = [];
             foreach (($d['items'] ?? []) as $item) {
