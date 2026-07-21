@@ -156,6 +156,10 @@ select option { background:var(--bg2); }
 .required-note { font-size:11px;color:var(--text2);margin-bottom:20px; }
 .size-bar { height:4px;background:var(--bg3);border-radius:2px;margin-top:8px;overflow:hidden;display:none; }
 .size-bar-fill { height:100%;border-radius:2px;transition:width .3s; }
+.upload-progress-wrap { display:none;margin-top:12px; }
+.upload-progress-bar { height:10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;overflow:hidden; }
+.upload-progress-fill { height:100%;width:0%;background:var(--accent);border-radius:6px;transition:width .15s ease; }
+.upload-progress-text { font-size:12px;color:var(--text2);margin-top:6px;text-align:center; }
 </style>
 </head>
 <body>
@@ -255,6 +259,10 @@ select option { background:var(--bg2); }
       </div>
 
       <button type="submit" class="btn" id="submitBtn">📤 Submit Invoice</button>
+      <div class="upload-progress-wrap" id="uploadProgressWrap">
+        <div class="upload-progress-bar"><div class="upload-progress-fill" id="uploadProgressFill"></div></div>
+        <div class="upload-progress-text" id="uploadProgressText">Uploading… 0%</div>
+      </div>
     </form>
   </div>
   <?php endif; ?>
@@ -385,29 +393,74 @@ function handleFileSelect(input) {
 }
 
 document.getElementById('vendorForm')?.addEventListener('submit', function(e) {
+    e.preventDefault();
     const suffix = document.getElementById('invoiceNumberSuffix').value.trim();
     if (!suffix) {
-        e.preventDefault();
         alert('Please enter your invoice number.');
         return;
     }
     document.getElementById('invoiceNumber').value = 'Invoice-' + suffix.toUpperCase();
     if (!invoiceValid) {
-        e.preventDefault();
         alert('Please fix the duplicate invoice number before submitting.');
         return;
     }
     const file = document.getElementById('invoiceFile').files[0];
     if (!file) {
-        e.preventDefault();
         alert('Please upload your invoice PDF.');
         return;
     }
     if (!fileValid) {
-        e.preventDefault();
         alert('Please fix the invoice file issues before submitting.');
+        return;
     }
+    submitWithProgress(this);
 });
+
+function submitWithProgress(form) {
+    const submitBtn = document.getElementById('submitBtn');
+    const progWrap  = document.getElementById('uploadProgressWrap');
+    const progFill  = document.getElementById('uploadProgressFill');
+    const progText  = document.getElementById('uploadProgressText');
+
+    submitBtn.disabled      = true;
+    submitBtn.style.display = 'none';
+    progWrap.style.display  = 'block';
+    progFill.style.width    = '0%';
+    progFill.style.background = 'var(--accent)';
+    progText.textContent    = 'Uploading… 0%';
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', window.location.href, true);
+
+    xhr.upload.onprogress = function(evt) {
+        if (!evt.lengthComputable) return;
+        const pct = Math.round((evt.loaded / evt.total) * 100);
+        progFill.style.width = pct + '%';
+        progText.textContent = pct < 100 ? `Uploading… ${pct}%` : 'Processing…';
+    };
+
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            document.open();
+            document.write(xhr.responseText);
+            document.close();
+        } else {
+            progText.textContent      = '❌ Upload failed — please try again.';
+            progFill.style.background = 'var(--red)';
+            submitBtn.disabled        = false;
+            submitBtn.style.display   = 'flex';
+        }
+    };
+
+    xhr.onerror = function() {
+        progText.textContent      = '❌ Upload failed — check your connection and try again.';
+        progFill.style.background = 'var(--red)';
+        submitBtn.disabled        = false;
+        submitBtn.style.display   = 'flex';
+    };
+
+    xhr.send(new FormData(form));
+}
 </script>
 </body>
 </html>
