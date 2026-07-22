@@ -24,6 +24,7 @@ $fromEmail   = getSetting('email_from') ?: (getSetting('company_email') ?: 'acco
 $ccSetting   = getSetting('invoice_cc_emails', '');
 $daysLeft    = (int)round((strtotime($inv['due_date']) - strtotime(date('Y-m-d'))) / 86400);
 
+$inv['access_token'] = getInvoiceAccessToken($db, $id);
 $body    = reminderEmailBody($inv, $companyName, $sym, $daysLeft);
 $ccList  = array_unique(array_filter(array_map('trim', explode(',', ($inv['c_cc_emails'] ?? '') . ',' . $ccSetting))));
 $subject = ($daysLeft < 0 ? 'Overdue: ' : 'Payment Reminder: ') . "Invoice {$inv['invoice_number']}";

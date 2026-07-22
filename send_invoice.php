@@ -17,6 +17,8 @@ $items = $db->prepare("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY s
 $items->execute([$id]);
 $items = $items->fetchAll();
 
+$accessToken = getInvoiceAccessToken($db, $id);
+
 $S = [];
 foreach ($db->query("SELECT setting_key,setting_value FROM settings")->fetchAll() as $r) $S[$r['setting_key']] = $r['setting_value'];
 
@@ -95,7 +97,7 @@ ob_start();
     </div>
 
     <div style="text-align:center">
-      <a class="btn-view" href="<?= SITE_URL ?>/invoice_print.php?id=<?= $id ?>"><?= $isQuote?'View Quotation':'View & Download Invoice' ?></a>
+      <a class="btn-view" href="<?= SITE_URL ?>/invoice_view.php?id=<?= $id ?>&t=<?= urlencode($accessToken) ?>"><?= $isQuote?'View Quotation':'View & Download Invoice' ?></a>
     </div>
   </div>
   <div class="footer">

@@ -32,6 +32,7 @@ $invoices = $stmt->fetchAll();
 
 function sendReminderEmail($db, $inv, $reminderType, $daysLeft, $companyName, $sym, $fromEmail, $ccSetting) {
     if (!$inv['c_email']) return false;
+    $inv['access_token'] = getInvoiceAccessToken($db, $inv['id']);
     $body = reminderEmailBody($inv, $companyName, $sym, $daysLeft);
     $ccList = array_unique(array_filter(array_map('trim', explode(',', ($inv['c_cc_emails'] ?? '') . ',' . $ccSetting))));
     $subject = ($daysLeft < 0 ? 'Overdue: ' : 'Payment Reminder: ') . "Invoice {$inv['invoice_number']}";
