@@ -6,6 +6,7 @@
 // (the token is generated in the `settings` table by invoice_email_upgrade.sql — check its value there)
 require_once 'config.php';
 require_once __DIR__ . '/includes/reminder_render.php';
+require_once __DIR__ . '/includes/invoice_access.php';
 $db = getDB();
 
 if (php_sapi_name() !== 'cli') {

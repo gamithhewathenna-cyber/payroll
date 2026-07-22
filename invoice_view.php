@@ -6,6 +6,7 @@
 // verify by typing the email address the invoice was sent to — no password.
 require_once 'config.php';
 require_once 'includes/invoice_render.php';
+require_once 'includes/invoice_access.php';
 $db = getDB();
 
 $id    = (int)($_GET['id'] ?? 0);

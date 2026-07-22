@@ -4,6 +4,7 @@
 // reminder2_sent_at, so sending one manually never blocks or skips a scheduled reminder.
 require_once 'config.php';
 require_once __DIR__ . '/includes/reminder_render.php';
+require_once __DIR__ . '/includes/invoice_access.php';
 requireAdmin();
 $db = getDB();
 
