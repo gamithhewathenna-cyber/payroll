@@ -44,9 +44,9 @@ function getPendingApprovals($db) {
     return $out;
 }
 
-// Approves a vendor_submissions row: records the freelance payment (unchanged existing
-// behavior), creates a matching Expense entry (category "Freelancer Costs") so it flows
-// into expense tracking/rebilling, and emails the vendor.
+// Approves a vendor_submissions row: records the freelance payment and emails the vendor.
+// Deliberately does NOT also create an Expense entry — the freelance payment is the single
+// source of truth for vendor-submitted invoices, so it isn't double-counted in Expenses.
 function approveVendorSubmission($db, $id, $reviewerName) {
     $stmt = $db->prepare("SELECT vs.*, f.freelancer_name, f.email FROM vendor_submissions vs JOIN freelancers f ON f.id=vs.freelancer_id WHERE vs.id=? AND vs.submission_status='pending'");
     $stmt->execute([$id]);
@@ -58,21 +58,6 @@ function approveVendorSubmission($db, $id, $reviewerName) {
 
     $db->prepare("UPDATE vendor_submissions SET submission_status='approved', reviewed_at=NOW(), reviewed_by=? WHERE id=?")
        ->execute([$reviewerName, $id]);
-
-    // Also record it as an expense so it flows into expense tracking / client rebilling
-    $db->prepare("INSERT INTO expenses (expense_date,billing_month,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,created_by,approval_status,approved_by,approved_at) VALUES (?,?,'internal',?,?,?,?,'LKR',1,0,0,?,'pending',?,?,'approved',?,NOW())")
-       ->execute([
-           $sub['invoice_date'] ?: date('Y-m-d'),
-           $sub['month'],
-           'Freelancer Costs',
-           $sub['project_name'],
-           'Freelancer invoice ' . $sub['invoice_number'] . ' — ' . $sub['freelancer_name'],
-           $sub['payment_amount'],
-           $sub['payment_amount'],
-           'Auto-created from vendor invoice submission (' . $sub['freelancer_name'] . ')',
-           $reviewerName,
-           $reviewerName,
-       ]);
 
     // Notify the vendor
     if ($sub['email']) {
@@ -123,7 +108,7 @@ Your payment will be processed and ready soon. We will notify you once the payme
         mail($sub['email'], $subject, $emailBody, $headers, "-f{$fromEmail}");
     }
 
-    return ['success' => true, 'message' => 'Invoice approved, added to payroll, and recorded as an expense.' . ($sub['email'] ? ' Approval email sent to vendor.' : ''), 'freelancer' => $sub['freelancer_name'], 'amount' => (float)$sub['payment_amount']];
+    return ['success' => true, 'message' => 'Invoice approved and added to freelance payments.' . ($sub['email'] ? ' Approval email sent to vendor.' : ''), 'freelancer' => $sub['freelancer_name'], 'amount' => (float)$sub['payment_amount']];
 }
 
 function rejectVendorSubmission($db, $id, $reason, $reviewerName) {
