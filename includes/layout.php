@@ -45,7 +45,8 @@ body { font-family:'Poppins',sans-serif; background:var(--bg); color:var(--text)
 .content-area { padding:20px; flex:1; }
 
 /* ── Flash ── */
-.flash-msg { padding:12px 16px; border-radius:var(--radius); margin-bottom:18px; color:#fff; font-weight:500; font-size:13.5px; transition:opacity .3s; }
+.flash-msg { position:fixed; top:16px; right:16px; z-index:9999; max-width:360px; padding:12px 16px; border-radius:var(--radius); color:#fff; font-weight:500; font-size:13.5px; box-shadow:0 6px 20px rgba(0,0,0,.35); transition:opacity .3s; }
+@media(max-width:768px) { .flash-msg { left:16px; right:16px; max-width:none; top:12px; } }
 
 /* ── Cards ── */
 .card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
