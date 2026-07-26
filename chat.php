@@ -213,6 +213,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat'
         }
     }
 
+    // Persist this turn so it reappears when the chat is reopened (see chatHistory below)
+    $lastUserMsg = end($messages);
+    if ($lastUserMsg && ($lastUserMsg['role'] ?? '') === 'user') {
+        $db->prepare("INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)")
+           ->execute([currentUserId(), 'user', $lastUserMsg['content'] ?? '']);
+    }
+    $db->prepare("INSERT INTO chat_messages (user_id, role, content, link) VALUES (?,?,?,?)")
+       ->execute([currentUserId(), 'assistant', $text, $reportLink]);
+
     echo json_encode(['reply' => $text, 'action' => $actionData, 'link' => $reportLink, 'pendingApprovals' => getPendingApprovals($db)]);
     exit;
 }
@@ -402,6 +411,19 @@ $rev       = $db->prepare("SELECT COALESCE(SUM(total),0) FROM invoices WHERE DAT
 $sal       = $db->prepare("SELECT COALESCE(SUM(final_salary),0) FROM payroll WHERE month=?"); $sal->execute([$month]); $sal=$sal->fetchColumn();
 $initialPending = getPendingApprovals($db);
 
+// Last 5 days of this admin's chat history — shown again when the chat is reopened.
+// Rows older than 5 days are purged opportunistically here.
+$db->exec("DELETE FROM chat_messages WHERE created_at < DATE_SUB(NOW(), INTERVAL 5 DAY)");
+$histStmt = $db->prepare("SELECT role, content, link FROM chat_messages WHERE user_id=? ORDER BY id ASC");
+$histStmt->execute([currentUserId()]);
+$chatHistory = $histStmt->fetchAll();
+
+function chatFmt($t) {
+    $t = htmlspecialchars($t ?? '', ENT_NOQUOTES, 'UTF-8');
+    $t = preg_replace('/\*\*(.*?)\*\*/s', '<strong>$1</strong>', $t);
+    return nl2br($t);
+}
+
 pageHeader('AI Assistant');
 ?>
 
@@ -463,6 +485,15 @@ pageHeader('AI Assistant');
           <?php if (!$hasApiKey): ?>⚠️ <em>Add your API key in Settings to activate me.</em><?php else: ?>Try asking me something! 👇<?php endif; ?>
         </div>
       </div>
+      <?php if ($chatHistory): ?>
+      <div style="text-align:center;font-size:11px;color:var(--text2);margin:6px 0">— Previous conversation (last 5 days) —</div>
+      <?php foreach ($chatHistory as $h): ?>
+      <div class="msg <?= $h['role'] ?>">
+        <div class="msg-avatar"><?= $h['role']==='user'?'👤':'🤖' ?></div>
+        <div class="msg-bubble"><?= chatFmt($h['content']) ?><?php if ($h['link']): ?><div style="margin-top:8px"><a href="<?= h($h['link']) ?>" target="_blank" style="color:var(--accent)">View →</a></div><?php endif; ?></div>
+      </div>
+      <?php endforeach; ?>
+      <?php endif; ?>
     </div>
     <div class="chat-input-wrap">
       <textarea class="chat-input" id="chatInput" rows="2"
@@ -510,7 +541,7 @@ pageHeader('AI Assistant');
 </div>
 
 <script>
-let history = [];
+let history = <?= json_encode(array_map(fn($h) => ['role' => $h['role'], 'content' => $h['content']], $chatHistory), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 let pending = null;
 
 function handleKey(e) {
@@ -694,6 +725,8 @@ function cancelAction(btn) {
 
 document.addEventListener('DOMContentLoaded', () => {
     renderPendingApprovals(<?= json_encode($initialPending) ?>);
+    const wrap = document.getElementById('chatMessages');
+    wrap.scrollTop = wrap.scrollHeight;
 });
 </script>
 
