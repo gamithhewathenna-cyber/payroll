@@ -100,6 +100,7 @@ tbody tr:last-child td { border-bottom:none; }
 label { font-size:12px; font-weight:500; color:var(--text2); }
 input, select, textarea { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:9px 12px; border-radius:7px; font-family:'Poppins',sans-serif; font-size:14px; transition:border-color .15s; width:100%; -webkit-appearance:none; }
 input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); }
+input[type=checkbox], input[type=radio] { -webkit-appearance:auto; appearance:auto; accent-color:var(--accent); background:none; border:none; padding:0; width:auto; }
 select option { background:var(--bg2); }
 textarea { resize:vertical; min-height:80px; }
 .form-actions { display:flex; gap:10px; padding-top:8px; flex-wrap:wrap; }
