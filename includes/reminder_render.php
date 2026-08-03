@@ -25,9 +25,16 @@ function reminderEmailBody($inv, $companyName, $sym, $daysLeft) {
         <?php else: ?>
           This is a reminder that invoice <strong><?= htmlspecialchars($inv['invoice_number']) ?></strong> is due in <strong><?= $daysLeft ?> day<?= $daysLeft==1?'':'s' ?></strong> (<?= date('d M Y', strtotime($inv['due_date'])) ?>).
         <?php endif; ?></p>
+        <?php $hasAdvance = ($inv['advance_amount']??0) > 0; $balDue = $hasAdvance ? max(0, $inv['total']-$inv['advance_amount']) : $inv['total']; ?>
+        <?php if ($hasAdvance): ?>
+        <div style="display:flex;justify-content:space-between;padding:0 4px;margin-bottom:8px;font-size:13px;color:#1a7c4e">
+          <span>Advance Paid<?php if (!empty($inv['advance_date'])): ?> (<?= date('d M Y', strtotime($inv['advance_date'])) ?>)<?php endif; ?></span>
+          <span>-<?= $sym ?> <?= number_format($inv['advance_amount'],2) ?></span>
+        </div>
+        <?php endif; ?>
         <div class="total-box">
-          <span>Amount Due</span>
-          <span class="total-amount"><?= $sym ?> <?= number_format($inv['total'],2) ?></span>
+          <span><?= $hasAdvance ? 'Balance Due' : 'Amount Due' ?></span>
+          <span class="total-amount"><?= $sym ?> <?= number_format($balDue,2) ?></span>
         </div>
         <div style="text-align:center;margin-top:10px">
           <a class="btn-view" href="<?= SITE_URL ?>/invoice_view.php?id=<?= $inv['id'] ?>&t=<?= urlencode($inv['access_token']) ?>">View Invoice</a>
