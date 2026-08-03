@@ -199,6 +199,13 @@ tbody tr:last-child td { border-bottom:none; }
         <tr><td>Tax (<?= $inv['tax_pct'] ?>%)</td><td><?= $tSym ?> <?= number_format($tTax,2) ?></td></tr>
       <?php endif; ?>
       <tr class="total-row"><td>TOTAL</td><td><?= $tSym ?> <?= number_format($tTotal,2) ?></td></tr>
+      <?php if (($inv['advance_amount']??0) > 0):
+        $tAdv = $isForeign ? ($inv['advance_amount'] / $invRate) : $inv['advance_amount'];
+        $tBal = max(0, $tTotal - $tAdv);
+      ?>
+      <tr><td style="color:#1a7c4e">Advance Paid<?php if (!empty($inv['advance_date'])): ?> <span style="font-weight:400;color:#999;font-size:10px">(<?= date('d M Y',strtotime($inv['advance_date'])) ?>)</span><?php endif; ?></td><td style="color:#1a7c4e">-<?= $tSym ?> <?= number_format($tAdv,2) ?></td></tr>
+      <tr class="total-row"><td>Balance Due</td><td style="color:#c0392b"><?= $tSym ?> <?= number_format($tBal,2) ?></td></tr>
+      <?php endif; ?>
     </table>
   </div>
 

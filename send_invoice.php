@@ -92,9 +92,23 @@ ob_start();
       </tbody>
     </table>
 
+    <?php
+    $hasAdvance = !$isQuote && ($inv['advance_amount']??0) > 0;
+    $tTotal     = $isForeign ? $inv['total']/$invRate : $inv['total'];
+    if ($hasAdvance) {
+        $tAdv = $isForeign ? $inv['advance_amount']/$invRate : $inv['advance_amount'];
+        $tBal = max(0, $tTotal - $tAdv);
+    }
+    ?>
+    <?php if ($hasAdvance): ?>
+    <div style="display:flex;justify-content:space-between;padding:0 4px;margin-bottom:8px;font-size:13px;color:#00c48c">
+      <span>Advance Paid<?php if (!empty($inv['advance_date'])): ?> (<?= date('d M Y', strtotime($inv['advance_date'])) ?>)<?php endif; ?></span>
+      <span>-<?= fm2($tAdv, $tSym) ?></span>
+    </div>
+    <?php endif; ?>
     <div class="total-box">
-      <span class="total-label">Total <?= $isQuote?'Amount':'Due' ?></span>
-      <span class="total-amount"><?= fm2($isForeign ? $inv['total']/$invRate : $inv['total'], $tSym) ?></span>
+      <span class="total-label"><?= $hasAdvance ? 'Balance Due' : ('Total '.($isQuote?'Amount':'Due')) ?></span>
+      <span class="total-amount"><?= fm2($hasAdvance ? $tBal : $tTotal, $tSym) ?></span>
     </div>
 
     <div style="text-align:center">
