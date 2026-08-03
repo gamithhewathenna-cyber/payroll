@@ -107,14 +107,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && in_array($action,['save','save_new'])
     $taxAmt  = round(($subtotal-$discAmt)*$taxPct/100,2);
     $total   = round($subtotal-$discAmt+$taxAmt,2);
 
+    $advAmount = trim($d['advance_amount']??'') !== '' ? (float)$d['advance_amount'] : null;
+    $advDate   = !empty($d['advance_date']) ? $d['advance_date'] : null;
+
     if ($id) {
-        $db->prepare("UPDATE invoices SET invoice_type=?,client_id=?,issue_date=?,due_date=?,billing_month=?,subtotal=?,discount_pct=?,discount_amt=?,tax_pct=?,tax_amt=?,total=?,inv_currency=?,inv_rate=?,status=?,notes=?,terms=?,manual_client_data=? WHERE id=?")
-           ->execute([$invType,$cid,$d['issue_date'],$d['due_date']??null,$d['billing_month']??null,$subtotal,$discPct,$discAmt,$taxPct,$taxAmt,$total,$invCurrency,$invRate,$d['status']??'draft',trim($d['notes']??''),trim($d['terms']??''),$manualJson,$id]);
+        $db->prepare("UPDATE invoices SET invoice_type=?,client_id=?,issue_date=?,due_date=?,billing_month=?,subtotal=?,discount_pct=?,discount_amt=?,tax_pct=?,tax_amt=?,total=?,inv_currency=?,inv_rate=?,status=?,notes=?,terms=?,manual_client_data=?,advance_amount=?,advance_date=? WHERE id=?")
+           ->execute([$invType,$cid,$d['issue_date'],$d['due_date']??null,$d['billing_month']??null,$subtotal,$discPct,$discAmt,$taxPct,$taxAmt,$total,$invCurrency,$invRate,$d['status']??'draft',trim($d['notes']??''),trim($d['terms']??''),$manualJson,$advAmount,$advDate,$id]);
         $db->prepare("DELETE FROM invoice_items WHERE invoice_id=?")->execute([$id]);
         $invId = $id;
     } else {
-        $db->prepare("INSERT INTO invoices (invoice_number,invoice_type,client_id,issue_date,due_date,billing_month,subtotal,discount_pct,discount_amt,tax_pct,tax_amt,total,inv_currency,inv_rate,status,notes,terms,created_by,manual_client_data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-           ->execute([$invNo,$invType,$cid,$d['issue_date'],$d['due_date']??null,$d['billing_month']??null,$subtotal,$discPct,$discAmt,$taxPct,$taxAmt,$total,$invCurrency,$invRate,$d['status']??'draft',trim($d['notes']??''),trim($d['terms']??''),$_SESSION['full_name'],$manualJson]);
+        $db->prepare("INSERT INTO invoices (invoice_number,invoice_type,client_id,issue_date,due_date,billing_month,subtotal,discount_pct,discount_amt,tax_pct,tax_amt,total,inv_currency,inv_rate,status,notes,terms,created_by,manual_client_data,advance_amount,advance_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+           ->execute([$invNo,$invType,$cid,$d['issue_date'],$d['due_date']??null,$d['billing_month']??null,$subtotal,$discPct,$discAmt,$taxPct,$taxAmt,$total,$invCurrency,$invRate,$d['status']??'draft',trim($d['notes']??''),trim($d['terms']??''),$_SESSION['full_name'],$manualJson,$advAmount,$advDate]);
         $invId = $db->lastInsertId();
     }
     foreach ($items as [$desc,$subdesc,$qty,$price,$amtLKR,$itype,$expId,$ord]) {
@@ -370,6 +373,22 @@ $invRate    = $id ? (float)($inv['inv_rate']??1) : 1;
         </select>
         <?php if ($isViewOnly): ?><input type="hidden" name="status" value="<?= h($inv['status']) ?>"><?php endif; ?>
       </div>
+      <?php if (!$isQuote): ?>
+      <div class="form-group" style="margin-bottom:12px">
+        <label>Advance Payment Received <span style="color:var(--text2);font-weight:400;font-size:10px">(<?= $sym ?>, optional)</span></label>
+        <input type="number" name="advance_amount" step="0.01" min="0" placeholder="0.00" value="<?= h($id?($inv['advance_amount']??''):'') ?>" <?= $isViewOnly?'readonly':'' ?>>
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label>Advance Payment Date</label>
+        <input type="date" name="advance_date" value="<?= h($id?($inv['advance_date']??''):'') ?>" <?= $isViewOnly?'readonly':'' ?>>
+      </div>
+      <?php if ($id && ($inv['advance_amount']??0) > 0): ?>
+      <div class="form-group" style="margin-bottom:12px">
+        <label>Balance Due</label>
+        <div style="font-weight:700;color:var(--yellow)"><?= $sym ?> <?= number_format(max(0,$inv['total']-$inv['advance_amount']),2) ?></div>
+      </div>
+      <?php endif; ?>
+      <?php endif; ?>
       <?php if ($id && $inv['paid_date']): ?>
       <div class="form-group">
         <label>Paid On</label>

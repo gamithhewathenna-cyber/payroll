@@ -387,7 +387,11 @@ $activeRange = $dateRange;
             <?php if ($tab === 'invoices'): ?>
             <td data-label="Due" style="font-size:12px;color:<?= $inv['status']==='overdue'?'var(--red)':'var(--text2)' ?>"><?= $inv['due_date'] ? date('d M Y',strtotime($inv['due_date'])) : '—' ?></td>
             <?php endif; ?>
-            <td data-label="Total"><strong style="color:var(--green)"><?= $sym ?> <?= number_format($inv['total'],2) ?></strong></td>
+            <td data-label="Total"><strong style="color:var(--green)"><?= $sym ?> <?= number_format($inv['total'],2) ?></strong>
+              <?php if (($inv['advance_amount']??0) > 0): ?>
+              <div style="font-size:11px;color:var(--yellow)">Advance: <?= $sym ?> <?= number_format($inv['advance_amount'],2) ?></div>
+              <?php endif; ?>
+            </td>
             <td data-label="Status">
               <select onchange="window.location='?action=status&id=<?= $inv['id'] ?>&s='+this.value+'&tab=<?= $tab ?>'"
                 style="background:transparent;border:none;font-size:12px;font-weight:600;cursor:pointer;color:var(--<?= ['draft'=>'accent','sent'=>'yellow','paid'=>'green','overdue'=>'red','cancelled'=>'text2'][$inv['status']]??'text2' ?>)">
