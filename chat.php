@@ -182,6 +182,137 @@ function handleReadOnlyAction($db, $type, $d, $sym) {
         return ['message' => trim($msg), 'link' => SITE_URL.'/invoice_form.php?id='.$inv['id']];
     }
 
+    if ($type === 'get_employee_salary') {
+        $name = trim($d['employee_name'] ?? '');
+        if (!$name) return ['message' => "Please tell me the employee's name.", 'link' => null];
+        $stmt = $db->prepare("SELECT id, full_name, position, department, salary_type, monthly_salary, payment_method, status, joining_date FROM employees WHERE full_name LIKE ?");
+        $stmt->execute(["%{$name}%"]);
+        $rows = $stmt->fetchAll();
+        if (!$rows) return ['message' => "No employee found matching \"{$name}\".", 'link' => SITE_URL.'/employees.php'];
+        if (count($rows) > 1) {
+            $list = implode("\n", array_map(fn($r) => "- **{$r['full_name']}** — {$r['position']}", $rows));
+            return ['message' => "I found multiple employees matching \"{$name}\":\n\n{$list}\n\nCan you be more specific?", 'link' => SITE_URL.'/employees.php'];
+        }
+        $e = $rows[0];
+        $msg  = "👤 **{$e['full_name']}** — {$e['position']}" . ($e['department'] ? " ({$e['department']})" : '') . "\n";
+        $msg .= "Status: " . ucfirst($e['status']) . "\n";
+        $msg .= "Salary Type: " . ucfirst(str_replace('_',' ',$e['salary_type'])) . "\n";
+        $msg .= "Monthly Salary: {$sym} " . number_format($e['monthly_salary'],2) . "\n";
+        if ($e['payment_method']) $msg .= "Payment Method: " . ucfirst(str_replace('_',' ',$e['payment_method'])) . "\n";
+        if ($e['joining_date']) $msg .= "Joined: " . date('d M Y', strtotime($e['joining_date']));
+        return ['message' => trim($msg), 'link' => SITE_URL.'/employees.php?action=edit&id='.$e['id']];
+    }
+
+    if ($type === 'get_payroll_report') {
+        $month   = trim($d['month'] ?? '') ?: date('Y-m');
+        $empName = trim($d['employee_name'] ?? '');
+        $period  = date('F Y', strtotime($month.'-01'));
+
+        if ($empName) {
+            $eStmt = $db->prepare("SELECT id, full_name, position FROM employees WHERE full_name LIKE ?");
+            $eStmt->execute(["%{$empName}%"]);
+            $emps = $eStmt->fetchAll();
+            if (!$emps) return ['message' => "No employee found matching \"{$empName}\".", 'link' => SITE_URL.'/employees.php'];
+            if (count($emps) > 1) {
+                $list = implode("\n", array_map(fn($e) => "- **{$e['full_name']}** — {$e['position']}", $emps));
+                return ['message' => "I found multiple employees matching \"{$empName}\":\n\n{$list}\n\nCan you be more specific?", 'link' => SITE_URL.'/employees.php'];
+            }
+            $emp   = $emps[0];
+            $pStmt = $db->prepare("SELECT * FROM payroll WHERE employee_id=? AND month=?");
+            $pStmt->execute([$emp['id'], $month]);
+            $p = $pStmt->fetch();
+            if (!$p) return ['message' => "No payroll has been processed for **{$emp['full_name']}** in {$period} yet.", 'link' => SITE_URL.'/payroll.php?month='.$month];
+            $msg = "🧾 **Payslip — {$emp['full_name']}** ({$period})\nBase Salary: {$sym} " . number_format($p['base_salary'],2) . "\n";
+            if ($p['total_allowances']  > 0) $msg .= "Allowances: {$sym} " . number_format($p['total_allowances'],2) . "\n";
+            if ($p['total_commissions']  > 0) $msg .= "Commissions: {$sym} " . number_format($p['total_commissions'],2) . "\n";
+            if ($p['bonus']       > 0) $msg .= "Bonus: {$sym} " . number_format($p['bonus'],2) . "\n";
+            if ($p['deductions']  > 0) $msg .= "Deductions: -{$sym} " . number_format($p['deductions'],2) . "\n";
+            if ($p['advance_payment'] > 0) $msg .= "Advance: -{$sym} " . number_format($p['advance_payment'],2) . "\n";
+            $msg .= "**Final Salary: {$sym} " . number_format($p['final_salary'],2) . "**\n";
+            $msg .= "Status: " . ($p['payment_status']==='paid' ? '✅ Paid' . ($p['payment_date']?' on '.date('d M Y',strtotime($p['payment_date'])):'') : '⏳ Pending');
+            return ['message' => trim($msg), 'link' => SITE_URL.'/payslips.php?id='.$p['id']];
+        }
+
+        $stmt = $db->prepare("SELECT e.full_name, p.final_salary, p.payment_status
+                               FROM employees e LEFT JOIN payroll p ON p.employee_id=e.id AND p.month=?
+                               WHERE e.status='active' ORDER BY e.full_name");
+        $stmt->execute([$month]);
+        $rows = $stmt->fetchAll();
+        $total = 0; $paid = 0; $pending = 0; $missing = [];
+        foreach ($rows as $r) {
+            if ($r['final_salary'] === null) { $missing[] = $r['full_name']; continue; }
+            $total += $r['final_salary'];
+            if ($r['payment_status'] === 'paid') $paid++; else $pending++;
+        }
+        $msg = "👥 **Payroll Summary — {$period}**\n\nTotal Payroll: {$sym} " . number_format($total,2) . "\nPaid: {$paid} · Pending: {$pending}";
+        if ($missing) $msg .= "\n\n⚠️ **Not yet processed** (" . count($missing) . "): " . implode(', ', $missing);
+        return ['message' => trim($msg), 'link' => SITE_URL.'/payroll.php?month='.$month];
+    }
+
+    if ($type === 'get_freelancer_payments') {
+        $q      = trim($d['query'] ?? '');
+        $month  = trim($d['month'] ?? '');
+        $status = trim($d['status'] ?? '');
+
+        $sql = "SELECT fp.*, f.freelancer_name FROM freelance_payments fp JOIN freelancers f ON f.id=fp.freelancer_id WHERE 1=1";
+        $params = [];
+        if ($q)      { $sql .= " AND (f.freelancer_name LIKE ? OR fp.project_name LIKE ?)"; $params[] = "%{$q}%"; $params[] = "%{$q}%"; }
+        if ($month)  { $sql .= " AND fp.month=?"; $params[] = $month; }
+        if ($status && $status !== 'all') { $sql .= " AND fp.payment_status=?"; $params[] = $status; }
+        $sql .= " ORDER BY fp.invoice_date DESC LIMIT 25";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+
+        $labelBits = array_filter([$q?"\"{$q}\"":null, $month?date('F Y',strtotime($month.'-01')):null, ($status && $status!=='all')?ucfirst($status):null]);
+        $label = $labelBits ? ' — ' . implode(', ', $labelBits) : '';
+
+        if (!$rows) return ['message' => "No freelancer payments found{$label}.", 'link' => SITE_URL.'/freelance.php?tab=payments'];
+
+        $total = array_sum(array_column($rows, 'payment_amount'));
+        $msg = "🧑‍💻 **Freelancer Payments{$label}** (" . count($rows) . ", total {$sym} " . number_format($total,2) . ")\n\n";
+        foreach ($rows as $r) {
+            $badge = $r['payment_status'] === 'paid' ? '✅' : '⏳';
+            $date  = $r['payment_date'] ? date('d M Y', strtotime($r['payment_date'])) : ($r['invoice_date'] ? date('d M Y', strtotime($r['invoice_date'])) : '—');
+            $msg .= "{$badge} **{$r['freelancer_name']}** — {$r['project_name']} ({$r['invoice_number']}) — {$sym} " . number_format($r['payment_amount'],2) . " — {$date}\n";
+        }
+        return ['message' => trim($msg), 'link' => SITE_URL.'/freelance.php?tab=payments' . ($month?'&month='.$month:'')];
+    }
+
+    if ($type === 'get_invoice_report') {
+        $client = trim($d['client_name'] ?? '');
+        $status = trim($d['status'] ?? '');
+        $month  = trim($d['month'] ?? '');
+
+        $sql = "SELECT i.invoice_number, i.total, i.status, i.issue_date, i.due_date, i.paid_date, c.company_name, c.id as client_id
+                FROM invoices i JOIN clients c ON c.id=i.client_id WHERE i.invoice_type='invoice'";
+        $params = [];
+        if ($client) { $sql .= " AND c.company_name LIKE ?"; $params[] = "%{$client}%"; }
+        if ($status && $status !== 'all') { $sql .= " AND i.status=?"; $params[] = $status; }
+        if ($month)  { $sql .= " AND DATE_FORMAT(i.issue_date,'%Y-%m')=?"; $params[] = $month; }
+        $sql .= " ORDER BY i.issue_date DESC LIMIT 30";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+
+        $labelBits = array_filter([$client?"\"{$client}\"":null, ($status && $status!=='all')?ucfirst($status):null, $month?date('F Y',strtotime($month.'-01')):null]);
+        $label = $labelBits ? ' — ' . implode(', ', $labelBits) : '';
+
+        if (!$rows) return ['message' => "No invoices found{$label}.", 'link' => SITE_URL.'/invoices.php'];
+
+        $total  = array_sum(array_column($rows, 'total'));
+        $badges = ['draft'=>'📝','sent'=>'📤','paid'=>'✅','overdue'=>'⚠️','cancelled'=>'🚫'];
+        $msg = "📋 **Invoices{$label}** (" . count($rows) . ", total {$sym} " . number_format($total,2) . ")\n\n";
+        foreach ($rows as $r) {
+            $badge = $badges[$r['status']] ?? '';
+            $msg .= "{$badge} **{$r['invoice_number']}** — {$r['company_name']} — {$sym} " . number_format($r['total'],2) . " — " . date('d M Y', strtotime($r['issue_date'])) . "\n";
+        }
+        $link = ($client && count(array_unique(array_column($rows,'client_id'))) === 1)
+            ? SITE_URL.'/invoices.php?client='.$rows[0]['client_id']
+            : SITE_URL.'/invoices.php';
+        return ['message' => trim($msg), 'link' => $link];
+    }
+
     return null;
 }
 
@@ -215,7 +346,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chat'
     $rateUSD     = getSetting('rate_usd_lkr', '325');
     $rateAUD     = getSetting('rate_aud_lkr', '215');
 
-    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, clients, payroll, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**WRITE ACTIONS** (create/change something — always shown to the admin as a card with Confirm/Cancel buttons first; nothing is saved until they click Confirm):\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_client — Add a new client to the portal, with all their details\n4. create_payroll — Process payroll for an employee\n5. mark_invoice_paid — Mark an existing invoice as paid, found by client name, invoice number, and/or month (any combination the admin gives you)\n\n**READ-ONLY REPORT/LOOKUP ACTIONS** (these run immediately and show results right away — no confirmation needed, since viewing data can't change anything):\n6. get_report — Overall monthly summary (revenue, expenses, salaries, profit)\n7. get_expenses_by_client — Expenses grouped by client, with totals and a link to details\n8. get_monthly_expenses — Total expenses for a given month (cost, client-billable, internal)\n9. get_pending_invoices — List every outstanding (sent/overdue) invoice\n10. get_bank_reference — Look up the bank reference for a freelance payment by invoice number, project, or freelancer name\n11. get_invoice_details — Full details of ONE invoice or quotation: line items with costs, subtotal, discount, tax, total, advance paid, balance due, status, and dates. Use this whenever the admin asks about a specific invoice's details, cost, or full amount.\n\n12. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_client:** {\"action\":\"create_client\",\"data\":{\"company_name\":\"Ford Mustang\",\"contact_name\":\"John Smith\",\"email\":\"john@example.com\",\"phone\":\"+94 77 123 4567\",\"address\":\"123 Main St\",\"address_line2\":\"\",\"city\":\"Colombo\",\"country\":\"Sri Lanka\",\"vat_number\":\"\",\"industry\":\"Automotive\",\"notes\":\"\",\"default_currency\":\"USD\"}} — ask for whichever of these the admin hasn't given you before proposing it, but company_name is the only truly required field\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**mark_invoice_paid:** {\"action\":\"mark_invoice_paid\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_number\":\"\",\"month\":\"2026-06\",\"paid_date\":\"\"}} — fill in whichever of client_name/invoice_number/month the admin actually mentioned and leave the rest empty (at least one is required so the system can find the right invoice); paid_date defaults to today if left empty. If the system finds more than one matching invoice it will ask you to narrow it down — pass that back to the admin.\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"month\":\"2026-06\"}}\n\n**get_expenses_by_client:** {\"action\":\"get_expenses_by_client\",\"data\":{\"month\":\"2026-06\"}} — use \\\"month\\\":\\\"all\\\" if the admin wants all-time instead of one month\n\n**get_monthly_expenses:** {\"action\":\"get_monthly_expenses\",\"data\":{\"month\":\"2026-06\",\"client_name\":\"\"}} — omit or leave client_name empty for the overall monthly total; set it to get an itemized expense list + total for just that one client\n\n**get_pending_invoices:** {\"action\":\"get_pending_invoices\",\"data\":{\"client_name\":\"\"}} — omit or leave client_name empty to list all outstanding invoices; set it to filter to just that one client\n\n**get_bank_reference:** {\"action\":\"get_bank_reference\",\"data\":{\"query\":\"INV-2026-0004\"}} — query can be an invoice number, project name, or freelancer name\n\n**get_invoice_details:** {\"action\":\"get_invoice_details\",\"data\":{\"query\":\"INV-2026-0004\",\"month\":\"\"}} — query can be an invoice/quotation number or a client name; month is optional (YYYY-MM) to narrow down when a client has several invoices. If multiple invoices match, the system will list them and ask the admin to specify the exact number.\n\n## Important Rules\n- For WRITE actions: always confirm details before acting — show a summary and ask the admin to confirm. Never claim you've already created something; say you're proposing it for approval.\n- For READ-ONLY report/lookup actions: just include the JSON block, the system fills in and displays the actual data automatically — you don't need to fetch or state the numbers yourself\n- CRITICAL: if the admin says an invoice \\\"has been paid\\\", \\\"is paid\\\", \\\"got paid\\\", or asks you to mark/change an invoice's status to paid, that is ALWAYS mark_invoice_paid — an EXISTING invoice changing status. NEVER use create_invoice for this, even if you're not 100% sure which invoice they mean — create_invoice makes a brand new invoice from scratch and must never be used just to record a payment. create_invoice is ONLY for when the admin is describing new work/services to bill for.\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Separately from anything you propose, the system automatically surfaces pending vendor invoice submissions and staff expense requests as approval cards whenever the admin opens or uses this chat — you don't need to check for these yourself, just be aware they may appear and can explain them if asked\n- Be concise and friendly";
+    $systemPrompt = "You are the AI assistant for {$companyName}'s internal payroll and business management system. You help the admin manage invoices, expenses, clients, payroll, and freelancers through natural language.\n\n## Current System State ({$month})\n- Currency: {$sym} (LKR). USD rate: {$rateUSD} LKR. AUD rate: {$rateAUD} LKR.\n- Active employees ({$empCount}): {$empNames}\n- Active clients: {$clientNames}\n- This month: Revenue {$sym} {$rev}, Expenses {$sym} {$exp}, Salaries {$sym} {$sal}\n\n## Your Role\nYou can perform these ACTIONS by returning a JSON block in your response.\n\n**WRITE ACTIONS** (create/change something — always shown to the admin as a card with Confirm/Cancel buttons first; nothing is saved until they click Confirm):\n1. create_invoice — Create a new invoice\n2. create_expense — Add a new expense\n3. create_client — Add a new client to the portal, with all their details\n4. create_payroll — Process payroll for an employee\n5. mark_invoice_paid — Mark an existing invoice as paid, found by client name, invoice number, and/or month (any combination the admin gives you)\n\n**READ-ONLY REPORT/LOOKUP ACTIONS** (these run immediately and show results right away — no confirmation needed, since viewing data can't change anything):\n6. get_report — Overall monthly summary (revenue, expenses, salaries, profit)\n7. get_expenses_by_client — Expenses grouped by client, with totals and a link to details\n8. get_monthly_expenses — Total expenses for a given month (cost, client-billable, internal)\n9. get_pending_invoices — List every outstanding (sent/overdue) invoice\n10. get_bank_reference — Look up the bank reference for a freelance payment by invoice number, project, or freelancer name\n11. get_invoice_details — Full details of ONE invoice or quotation: line items with costs, subtotal, discount, tax, total, advance paid, balance due, status, and dates. Use this whenever the admin asks about a specific invoice's details, cost, or full amount.\n12. get_employee_salary — One employee's current salary, position, salary type, payment method, and status\n13. get_payroll_report — With an employee_name: that employee's full payslip breakdown for a month (base, allowances, commissions, bonus, deductions, advance, final salary, paid/pending). WITHOUT an employee_name: a whole-month payroll summary — total payroll cost, how many are paid vs pending, and which active employees have NOT been processed yet for that month (missing payroll)\n14. get_freelancer_payments — Freelancer/vendor payments: search by freelancer name and/or project name, optionally filter by month and/or status (pending/paid/all). Shows list + total — covers payment history, pending/overdue freelancer payments, and monthly freelancer cost totals\n15. get_invoice_report — Broader invoice search/summary: filter by client name, status (draft/sent/paid/overdue/cancelled/all), and/or month, in any combination. Shows list + total revenue for the matched invoices — use this for revenue totals, overdue lists, payment follow-up, or a client's payment history (get_pending_invoices and get_invoice_details still exist for their specific narrower cases)\n\n16. none — Just answer/explain, no action\n\n## Response Format\nAlways respond in plain friendly English FIRST, then if an action is needed include EXACTLY ONE JSON block:\n```json\n{\"action\":\"create_invoice\",\"data\":{...}}\n```\n\n## Action Schemas\n**create_invoice:** {\"action\":\"create_invoice\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_type\":\"invoice\",\"issue_date\":\"2026-06-11\",\"due_date\":\"2026-07-11\",\"billing_month\":\"2026-06\",\"currency\":\"USD\",\"status\":\"draft\",\"items\":[{\"desc\":\"Content Management\",\"subdesc\":\"June 2026\",\"qty\":1,\"price\":500}],\"discount_pct\":0,\"tax_pct\":0,\"notes\":\"Thank you\",\"terms\":\"Payment due 30 days\"}}\n\n**create_expense:** {\"action\":\"create_expense\",\"data\":{\"expense_date\":\"2026-06-11\",\"billing_month\":\"2026-06\",\"client_name\":\"Ford Mustang\",\"billing_type\":\"client\",\"expense_category\":\"Facebook Ads\",\"vendor\":\"Meta\",\"description\":\"June campaign\",\"cost_amount\":35,\"currency\":\"USD\",\"markup_percentage\":15,\"additional_fee\":0}}\n\n**create_client:** {\"action\":\"create_client\",\"data\":{\"company_name\":\"Ford Mustang\",\"contact_name\":\"John Smith\",\"email\":\"john@example.com\",\"phone\":\"+94 77 123 4567\",\"address\":\"123 Main St\",\"address_line2\":\"\",\"city\":\"Colombo\",\"country\":\"Sri Lanka\",\"vat_number\":\"\",\"industry\":\"Automotive\",\"notes\":\"\",\"default_currency\":\"USD\"}} — ask for whichever of these the admin hasn't given you before proposing it, but company_name is the only truly required field\n\n**create_payroll:** {\"action\":\"create_payroll\",\"data\":{\"employee_name\":\"Kasun Perera\",\"month\":\"2026-06\",\"bonus\":0,\"deductions\":0,\"advance\":0,\"payment_method\":\"bank_transfer\",\"notes\":\"\"}}\n\n**mark_invoice_paid:** {\"action\":\"mark_invoice_paid\",\"data\":{\"client_name\":\"Ford Mustang\",\"invoice_number\":\"\",\"month\":\"2026-06\",\"paid_date\":\"\"}} — fill in whichever of client_name/invoice_number/month the admin actually mentioned and leave the rest empty (at least one is required so the system can find the right invoice); paid_date defaults to today if left empty. If the system finds more than one matching invoice it will ask you to narrow it down — pass that back to the admin.\n\n**get_report:** {\"action\":\"get_report\",\"data\":{\"month\":\"2026-06\"}}\n\n**get_expenses_by_client:** {\"action\":\"get_expenses_by_client\",\"data\":{\"month\":\"2026-06\"}} — use \\\"month\\\":\\\"all\\\" if the admin wants all-time instead of one month\n\n**get_monthly_expenses:** {\"action\":\"get_monthly_expenses\",\"data\":{\"month\":\"2026-06\",\"client_name\":\"\"}} — omit or leave client_name empty for the overall monthly total; set it to get an itemized expense list + total for just that one client\n\n**get_pending_invoices:** {\"action\":\"get_pending_invoices\",\"data\":{\"client_name\":\"\"}} — omit or leave client_name empty to list all outstanding invoices; set it to filter to just that one client\n\n**get_bank_reference:** {\"action\":\"get_bank_reference\",\"data\":{\"query\":\"INV-2026-0004\"}} — query can be an invoice number, project name, or freelancer name\n\n**get_invoice_details:** {\"action\":\"get_invoice_details\",\"data\":{\"query\":\"INV-2026-0004\",\"month\":\"\"}} — query can be an invoice/quotation number or a client name; month is optional (YYYY-MM) to narrow down when a client has several invoices. If multiple invoices match, the system will list them and ask the admin to specify the exact number.\n\n**get_employee_salary:** {\"action\":\"get_employee_salary\",\"data\":{\"employee_name\":\"Kasun Perera\"}}\n\n**get_payroll_report:** {\"action\":\"get_payroll_report\",\"data\":{\"month\":\"2026-06\",\"employee_name\":\"\"}} — omit or leave employee_name empty for a whole-month summary across all active employees; set it for one employee's detailed payslip for that month. month defaults to the current month if omitted.\n\n**get_freelancer_payments:** {\"action\":\"get_freelancer_payments\",\"data\":{\"query\":\"\",\"month\":\"2026-06\",\"status\":\"\"}} — query can be a freelancer name or project name (optional); month is optional (YYYY-MM); status can be \\\"pending\\\", \\\"paid\\\", or omitted/\\\"all\\\" for everything. Any combination of the three filters can be used together.\n\n**get_invoice_report:** {\"action\":\"get_invoice_report\",\"data\":{\"client_name\":\"\",\"status\":\"\",\"month\":\"2026-06\"}} — all fields optional and combinable: client_name filters to one client, status can be \\\"draft\\\"/\\\"sent\\\"/\\\"paid\\\"/\\\"overdue\\\"/\\\"cancelled\\\"/\\\"all\\\", month (YYYY-MM) filters by issue date. Leave all empty to list everything with a total.\n\n## Important Rules\n- There is no attendance/leave/late-arrival tracking in this system — if the admin asks about that, say so plainly rather than guessing or using another action.\n- For WRITE actions: always confirm details before acting — show a summary and ask the admin to confirm. Never claim you've already created something; say you're proposing it for approval.\n- For READ-ONLY report/lookup actions: just include the JSON block, the system fills in and displays the actual data automatically — you don't need to fetch or state the numbers yourself\n- CRITICAL: if the admin says an invoice \\\"has been paid\\\", \\\"is paid\\\", \\\"got paid\\\", or asks you to mark/change an invoice's status to paid, that is ALWAYS mark_invoice_paid — an EXISTING invoice changing status. NEVER use create_invoice for this, even if you're not 100% sure which invoice they mean — create_invoice makes a brand new invoice from scratch and must never be used just to record a payment. create_invoice is ONLY for when the admin is describing new work/services to bill for.\n- If client name is ambiguous, ask which one\n- The manual system still works — you are an ADDITIONAL way to do things, not a replacement\n- Separately from anything you propose, the system automatically surfaces pending vendor invoice submissions and staff expense requests as approval cards whenever the admin opens or uses this chat — you don't need to check for these yourself, just be aware they may appear and can explain them if asked\n- Be concise and friendly";
 
     // ── cURL API call (works on cPanel shared hosting) ──
     $payload = json_encode([
