@@ -194,12 +194,10 @@ $tab          = $_GET['tab']    ?? 'invoices';
 $filter       = $_GET['status'] ?? '';
 $filterClient = (int)($_GET['client'] ?? 0);
 $dateRange    = $_GET['range']  ?? 'month'; // month | week | lastmonth | custom
-$dateFrom     = $_GET['from']   ?? '';
-$dateTo       = $_GET['to']     ?? '';
+$monthSel     = $_GET['month']  ?? '';
 $typeFilter   = $tab === 'quotations' ? 'quotation' : 'invoice';
 
 // Compute date boundaries
-$today = date('Y-m-d');
 switch ($dateRange) {
     case 'week':
         $df = date('Y-m-d', strtotime('monday this week'));
@@ -214,8 +212,9 @@ switch ($dateRange) {
         $dt = date('Y-m-t',  strtotime('last day of last month'));
         break;
     case 'custom':
-        $df = $dateFrom ?: date('Y-m-01');
-        $dt = $dateTo   ?: $today;
+        $monthSel = $monthSel ?: date('Y-m');
+        $df = date('Y-m-01', strtotime($monthSel . '-01'));
+        $dt = date('Y-m-t',  strtotime($monthSel . '-01'));
         break;
     case 'all':
         $df = $dt = null;
@@ -321,23 +320,18 @@ $activeRange = $dateRange;
         style="font-size:12px">📅 Custom</button>
     </div>
 
-    <!-- Custom date range -->
+    <!-- Custom month selector -->
     <div id="customDateWrap" style="display:<?= $activeRange==='custom'?'flex':'none' ?>;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
       <div class="form-group" style="margin:0">
-        <label style="font-size:11px">From</label>
-        <input type="date" name="from" value="<?= h($df??'') ?>" style="width:150px">
+        <label style="font-size:11px">Month</label>
+        <input type="month" name="month" value="<?= h($monthSel ?: date('Y-m')) ?>" style="width:150px">
       </div>
-      <div class="form-group" style="margin:0">
-        <label style="font-size:11px">To</label>
-        <input type="date" name="to" value="<?= h($dt??'') ?>" style="width:150px">
-      </div>
-      <input type="hidden" name="range" value="custom">
       <button type="submit" class="btn btn-primary btn-sm">Apply</button>
     </div>
 
     <!-- Status + Client dropdowns -->
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <input type="hidden" name="range" value="<?= $activeRange !== 'custom' ? h($activeRange) : '' ?>">
+      <input type="hidden" name="range" id="rangeInput" value="<?= h($activeRange) ?>">
       <select name="status" style="width:130px" onchange="this.form.submit()">
         <option value="">All Status</option>
         <?php foreach (['draft','sent','paid','overdue','cancelled'] as $st): ?>
@@ -857,7 +851,10 @@ document.addEventListener('DOMContentLoaded', () => {
 <script>
 function toggleCustomDate() {
     const wrap = document.getElementById('customDateWrap');
-    wrap.style.display = wrap.style.display === 'none' ? 'flex' : 'none';
+    const showing = wrap.style.display === 'none';
+    wrap.style.display = showing ? 'flex' : 'none';
+    const rangeInput = document.getElementById('rangeInput');
+    if (rangeInput) rangeInput.value = showing ? 'custom' : rangeInput.value;
 }
 
 function liveSearch(val) {
