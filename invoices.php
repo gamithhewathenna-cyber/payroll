@@ -320,9 +320,9 @@ $activeRange = $dateRange;
         style="font-size:12px">📅 Custom</button>
     </div>
 
-    <!-- Custom month picker (popup) -->
-    <div class="modal-overlay" id="customMonthModal">
-      <div class="modal" style="max-width:320px">
+    <!-- Custom month picker (popup, centered — unlike the bottom-sheet modals elsewhere) -->
+    <div class="modal-overlay" id="customMonthModal" style="align-items:center;padding:16px">
+      <div class="modal" style="max-width:320px;border-radius:14px;animation:none">
         <div class="modal-header">
           <div class="modal-title">Select Month</div>
           <button type="button" class="modal-close" onclick="closeModal('customMonthModal')">×</button>
