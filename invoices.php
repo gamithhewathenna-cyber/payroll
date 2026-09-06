@@ -315,18 +315,27 @@ $activeRange = $dateRange;
            class="btn btn-sm <?= $activeRange===$r?'btn-primary':'btn-ghost' ?>"
            style="font-size:12px"><?= $label ?></a>
       <?php endforeach; ?>
-      <button type="button" onclick="toggleCustomDate()"
+      <button type="button" onclick="openModal('customMonthModal')"
         class="btn btn-sm <?= $activeRange==='custom'?'btn-primary':'btn-ghost' ?>"
         style="font-size:12px">📅 Custom</button>
     </div>
 
-    <!-- Custom month selector -->
-    <div id="customDateWrap" style="display:<?= $activeRange==='custom'?'flex':'none' ?>;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
-      <div class="form-group" style="margin:0">
-        <label style="font-size:11px">Month</label>
-        <input type="month" name="month" value="<?= h($monthSel ?: date('Y-m')) ?>" style="width:150px">
+    <!-- Custom month picker (popup) -->
+    <div class="modal-overlay" id="customMonthModal">
+      <div class="modal" style="max-width:320px">
+        <div class="modal-header">
+          <div class="modal-title">Select Month</div>
+          <button type="button" class="modal-close" onclick="closeModal('customMonthModal')">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group" style="margin:0">
+            <label style="font-size:11px">Month</label>
+            <input type="month" name="month" value="<?= h($monthSel ?: date('Y-m')) ?>" style="width:100%">
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%;margin-top:14px"
+            onclick="document.getElementById('rangeInput').value='custom'">Apply</button>
+        </div>
       </div>
-      <button type="submit" class="btn btn-primary btn-sm">Apply</button>
     </div>
 
     <!-- Status + Client dropdowns -->
@@ -849,14 +858,6 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <script>
-function toggleCustomDate() {
-    const wrap = document.getElementById('customDateWrap');
-    const showing = wrap.style.display === 'none';
-    wrap.style.display = showing ? 'flex' : 'none';
-    const rangeInput = document.getElementById('rangeInput');
-    if (rangeInput) rangeInput.value = showing ? 'custom' : rangeInput.value;
-}
-
 function liveSearch(val) {
     // Client-side instant filter on invoice number column
     const rows = document.querySelectorAll('#invoiceTable tbody tr');
