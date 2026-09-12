@@ -88,17 +88,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rateKey     = 'rate_' . strtolower($currency) . '_lkr';
     $exRate      = $currency === 'LKR' ? 1.0 : (float)(getSetting($rateKey, '1'));
 
-    // "Bank Transfer" record type (Add Expense only, admin only): a pure bank-transaction
-    // log entry — excluded from billing/revenue/profit, auto-settled, and tracked only in
-    // the Payment Report tab. Never reachable for staff or for the edit action.
-    $recordType = ($action === 'add' && isAdmin() && ($d['record_type'] ?? '') === 'bank_transfer') ? 'bank_transfer' : 'expense';
+    // Bank-transfer record types (Add Expense only, admin only). Two flavors:
+    //  - "bank_transfer"         a pure bank-transaction log entry — excluded from
+    //                            billing/revenue/profit, tracked only in the Payment Report.
+    //  - "bank_transfer_expense" a normal billable expense (still counts toward Revenue/
+    //                            Profit/expense totals) that's also recorded as paid via
+    //                            bank transfer at creation, so it shows in the Payment Report too.
+    // Neither is reachable for staff or for the edit action.
+    $recordTypeInput      = ($action === 'add' && isAdmin()) ? ($d['record_type'] ?? 'expense') : 'expense';
+    $recordType            = $recordTypeInput === 'bank_transfer' ? 'bank_transfer' : 'expense';
+    $isBankTransferExpense = $recordTypeInput === 'bank_transfer_expense';
+    $isAnyBankTransfer     = $recordType === 'bank_transfer' || $isBankTransferExpense;
+
     $bankRef = null; $paymentReceiptPath = null; $paymentDate = null; $paymentMethod = null;
-    if ($recordType === 'bank_transfer') {
-        $billingType = 'internal';
-        $clientName  = null;
-        $markup      = 0;
-        $addFee      = 0;
-        $bankRef     = trim($d['bank_reference'] ?? '');
+    if ($isAnyBankTransfer) {
+        if ($recordType === 'bank_transfer') {
+            $billingType = 'internal';
+            $clientName  = null;
+            $markup      = 0;
+            $addFee      = 0;
+        }
+        $bankRef = trim($d['bank_reference'] ?? '');
         if ($bankRef === '') {
             setFlash('error', 'Bank Reference Number is required for a Bank Transfer record.');
             header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m'))); exit;
@@ -121,7 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $costLKR = $cost * $exRate;
     $total   = round($costLKR + ($costLKR * $markup / 100) + $addFee, 2);
-    $status  = $recordType === 'bank_transfer' ? 'paid' : ($d['status'] ?? 'pending');
+    $status  = $isAnyBankTransfer ? 'paid' : ($d['status'] ?? 'pending');
 
     // Receipt upload (PDF only) — keep the existing one if editing and no new file is given
     $receiptPath = null;
@@ -163,7 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add') {
         $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,record_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at,payment_date,payment_method,bank_reference,payment_receipt_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW(),?,?,?,?)")
            ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$recordType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$status,trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$_SESSION['full_name'],$paymentDate,$paymentMethod,$bankRef,$paymentReceiptPath]);
-        setFlash('success', $recordType === 'bank_transfer' ? '🏦 Bank transfer recorded.' : 'Expense added.');
+        setFlash('success', $recordType === 'bank_transfer' ? '🏦 Bank transfer recorded.' : ($isBankTransferExpense ? '🏦 Expense recorded as paid via bank transfer.' : 'Expense added.'));
     } elseif ($action === 'edit') {
         $stmt = $db->prepare("SELECT exchange_rate, currency FROM expenses WHERE id=?");
         $stmt->execute([$id]);
@@ -1164,15 +1174,18 @@ $rStats = $rStats->fetch();
           <?php if (isAdmin()): ?>
           <div class="form-group full" style="margin-bottom:4px">
             <label>Record Type</label>
-            <div style="display:flex;gap:16px;margin-top:6px">
+            <div style="display:flex;gap:16px;margin-top:6px;flex-wrap:wrap">
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
                 <input type="radio" name="record_type" value="expense" id="addRecordExpense" checked onchange="toggleRecordType('add')"> Not Bank Transfer (Normal Expense)
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+                <input type="radio" name="record_type" value="bank_transfer_expense" id="addRecordBankTransferExpense" onchange="toggleRecordType('add')"> Bank Transfer (Normal Expense)
               </label>
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
                 <input type="radio" name="record_type" value="bank_transfer" id="addRecordBankTransfer" onchange="toggleRecordType('add')"> Bank Transfer
               </label>
             </div>
-            <span style="font-size:11px;color:var(--text2)">Bank Transfer records are excluded from Revenue/Profit and all expense totals — they're only tracked in the Payment Report.</span>
+            <span style="font-size:11px;color:var(--text2)">"Bank Transfer (Normal Expense)" still counts toward Revenue/Profit and expense totals like a normal expense, and is recorded as paid — it also appears in the Payment Report. Plain "Bank Transfer" is excluded from Revenue/Profit and all expense totals — it's only tracked in the Payment Report.</span>
           </div>
           <?php endif; ?>
           <div class="form-group"><label>Expense Date *</label><input type="date" name="expense_date" required value="<?= date('Y-m-d') ?>"></div>
@@ -1360,35 +1373,55 @@ function toggleClient(prefix) {
     if (notice) notice.style.display = type === 'client_paid' ? 'block' : 'none';
 }
 
-// Add Expense: switch between a normal (billable) expense and a pure Bank Transfer
-// tracking record — the latter hides all billing fields and shows bank ref/receipt instead.
+// Add Expense: three record types —
+//  "expense"                normal expense, full billing fields, manual status
+//  "bank_transfer_expense"  normal expense (billing fields stay, counts in Revenue/Profit)
+//                           but paid via bank transfer at creation — bank ref/receipt shown,
+//                           status forced to Paid, appears in Payment Report
+//  "bank_transfer"          pure tracking record — billing fields hidden, excluded from
+//                           Revenue/Profit/totals, only appears in Payment Report
 function toggleRecordType(prefix) {
-    const bankTransferRadio = document.getElementById(prefix + 'RecordBankTransfer');
-    if (!bankTransferRadio) return;
-    const isBankTransfer = bankTransferRadio.checked;
+    const pureBankTransferRadio = document.getElementById(prefix + 'RecordBankTransfer');
+    const bankTransferExpenseRadio = document.getElementById(prefix + 'RecordBankTransferExpense');
+    if (!pureBankTransferRadio) return;
+    const isPureBankTransfer = pureBankTransferRadio.checked;
+    const isBankTransferExpense = !!(bankTransferExpenseRadio && bankTransferExpenseRadio.checked);
+    const isAnyBankTransfer = isPureBankTransfer || isBankTransferExpense;
 
-    ['BillingTypeGroup', 'MarkupGroup', 'FeeGroup', 'StatusGroup', 'OrigReceiptGroup'].forEach(suffix => {
+    // Billing fields only hide for the pure (non-billable) tracking record
+    ['BillingTypeGroup', 'MarkupGroup', 'FeeGroup'].forEach(suffix => {
         const el = document.getElementById(prefix + suffix);
-        if (el) el.style.display = isBankTransfer ? 'none' : '';
+        if (el) el.style.display = isPureBankTransfer ? 'none' : '';
     });
     const clientField = document.getElementById(prefix + 'ClientField');
-    if (clientField) clientField.style.display = isBankTransfer ? 'none' : '';
-    if (isBankTransfer) {
+    if (clientField) clientField.style.display = isPureBankTransfer ? 'none' : '';
+    if (isPureBankTransfer) {
         const notice = document.getElementById(prefix + 'ClientPaidNotice');
         if (notice) notice.style.display = 'none';
     } else {
         toggleClient(prefix);
     }
 
+    // Status is forced to Paid for either bank-transfer flavor
+    const statusGroup = document.getElementById(prefix + 'StatusGroup');
+    if (statusGroup) statusGroup.style.display = isAnyBankTransfer ? 'none' : '';
+
+    // Original expense receipt only makes sense for a real (billable) expense
+    const origReceiptGroup = document.getElementById(prefix + 'OrigReceiptGroup');
+    if (origReceiptGroup) origReceiptGroup.style.display = isPureBankTransfer ? 'none' : '';
+
+    // Bank reference + payment receipt apply to either bank-transfer flavor
     const bankRefGroup = document.getElementById(prefix + 'BankRefGroup');
     const receiptGroup = document.getElementById(prefix + 'PaymentReceiptGroup');
-    if (bankRefGroup) bankRefGroup.style.display = isBankTransfer ? '' : 'none';
-    if (receiptGroup) receiptGroup.style.display = isBankTransfer ? '' : 'none';
+    if (bankRefGroup) bankRefGroup.style.display = isAnyBankTransfer ? '' : 'none';
+    if (receiptGroup) receiptGroup.style.display = isAnyBankTransfer ? '' : 'none';
 }
 
 function validateAddExpense() {
-    const bankTransferRadio = document.getElementById('addRecordBankTransfer');
-    if (bankTransferRadio && bankTransferRadio.checked) {
+    const pureBankTransferRadio = document.getElementById('addRecordBankTransfer');
+    const bankTransferExpenseRadio = document.getElementById('addRecordBankTransferExpense');
+    const isAnyBankTransfer = (pureBankTransferRadio && pureBankTransferRadio.checked) || (bankTransferExpenseRadio && bankTransferExpenseRadio.checked);
+    if (isAnyBankTransfer) {
         const ref = document.getElementById('addBankRef');
         if (!ref.value.trim()) {
             alert('Bank Reference Number is required for a Bank Transfer record.');
