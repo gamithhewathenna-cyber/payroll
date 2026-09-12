@@ -41,6 +41,20 @@ if ($action === 'status' && $id) {
     setFlash('success', 'Status updated.');
     header('Location: ' . SITE_URL . '/expenses.php?' . http_build_query(['month'=>$_GET['month']??'','client'=>$_GET['client']??'','cat'=>$_GET['cat']??'','status'=>$_GET['status']??''])); exit;
 }
+if ($action === 'mark_paid' && $id) {
+    $paidDate = !empty($_GET['payment_date']) ? $_GET['payment_date'] : date('Y-m-d');
+    $method   = ($_GET['payment_method'] ?? '') === 'not_bank_transfer' ? 'not_bank_transfer' : 'bank_transfer';
+    $bankRef  = trim($_GET['bank_ref'] ?? '') ?: null;
+    $backTo   = SITE_URL . '/expenses.php?month=' . ($_GET['month'] ?? date('Y-m')) . '&tab=expenses';
+    if ($method === 'bank_transfer' && !$bankRef) {
+        setFlash('error', 'Bank Reference Number is required for bank transfer payments.');
+        header('Location: ' . $backTo); exit;
+    }
+    $db->prepare("UPDATE expenses SET status='paid', payment_date=?, payment_method=?, bank_reference=? WHERE id=?")
+       ->execute([$paidDate, $method, $bankRef, $id]);
+    setFlash('success', 'Expense marked as paid.');
+    header('Location: ' . $backTo); exit;
+}
 
 // ── POST ───────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -299,6 +313,7 @@ if (!isAdmin()) {
   <?php endif; ?>
   <?php if (isAdmin()): ?>
   <a href="?tab=report&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='report'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">📊 Report</a>
+  <a href="?tab=payment_report&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='payment_report'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">💵 Payment Report</a>
   <?php endif; ?>
 </div>
 
@@ -426,7 +441,7 @@ if (!isAdmin()) {
               <?php endif; ?>
             </td>
             <td data-label="Status">
-              <select onchange="updateStatus(<?= $e['id'] ?>, this.value, '<?= $filterMonth ?>')"
+              <select data-prev="<?= $e['status'] ?>" onchange="handleStatusChange(this, <?= $e['id'] ?>, '<?= $filterMonth ?>')"
                 style="background:transparent;border:none;font-size:12px;font-weight:600;cursor:pointer;padding:3px 6px;border-radius:12px;
                 color:<?= ['pending'=>'var(--yellow)','invoiced'=>'var(--accent)','paid'=>'var(--green)','cancelled'=>'var(--red)'][$e['status']] ?>">
                 <option value="pending"   <?= $e['status']==='pending'  ?'selected':'' ?>>Pending</option>
@@ -434,6 +449,9 @@ if (!isAdmin()) {
                 <option value="paid"      <?= $e['status']==='paid'     ?'selected':'' ?>>Paid</option>
                 <option value="cancelled" <?= $e['status']==='cancelled'?'selected':'' ?>>Cancelled</option>
               </select>
+              <?php if ($e['status'] === 'paid' && !empty($e['bank_reference'])): ?>
+                <div style="font-size:10px;color:var(--text2);margin-top:2px">🏦 <?= h($e['bank_reference']) ?></div>
+              <?php endif; ?>
             </td>
             <td data-label=""><div class="mob-actions">
               <?php if (isAdmin() && !empty($e['receipt_path'])): ?>
@@ -448,6 +466,101 @@ if (!isAdmin()) {
     </table>
   </div>
 </div>
+
+<!-- Mark as Paid Modal -->
+<style>
+/* Keep this one modal centered on all screen sizes, overriding the site-wide mobile bottom-sheet style */
+#markPaidModal { align-items: center !important; }
+#markPaidModal .modal { border-radius: 14px !important; max-height: 90vh !important; }
+</style>
+<div class="modal-overlay" id="markPaidModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <div class="modal-title">✓ Mark as Paid</div>
+      <button class="modal-close" onclick="cancelMarkPaid()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Payment Date *</label>
+        <input type="date" id="markPaidDate">
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Payment Method</label>
+        <div style="display:flex;gap:16px;margin-top:6px">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+            <input type="radio" name="payMethod" id="payMethodBank" checked onchange="toggleBankRefRequired()"> Bank Transfer
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+            <input type="radio" name="payMethod" id="payMethodNotBank" onchange="toggleBankRefRequired()"> Not Bank Transfer
+          </label>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:16px" id="markPaidRefGroup">
+        <label id="markPaidRefLabel">Bank Reference Number *</label>
+        <input type="text" id="markPaidRef" placeholder="e.g. TXN123456789">
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-success" style="width:auto;padding:8px 20px" onclick="confirmMarkPaid()">✓ Confirm Paid</button>
+        <button class="btn btn-ghost" style="width:auto;padding:8px 20px;background:var(--bg3);color:var(--text2)" onclick="cancelMarkPaid()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let markPaidId = null, markPaidMonth = '<?= h($filterMonth) ?>', markPaidSelect = null;
+
+function handleStatusChange(sel, id, month) {
+    if (sel.value === 'paid') {
+        openMarkPaid(id, month, sel);
+    } else {
+        updateStatus(id, sel.value, month);
+    }
+}
+
+function openMarkPaid(id, month, selectEl) {
+    markPaidId = id;
+    markPaidMonth = month;
+    markPaidSelect = selectEl || null;
+    document.getElementById('markPaidDate').value = new Date().toISOString().slice(0,10);
+    document.getElementById('markPaidRef').value = '';
+    document.getElementById('payMethodBank').checked = true;
+    toggleBankRefRequired();
+    openModal('markPaidModal');
+}
+
+function toggleBankRefRequired() {
+    const notBank  = document.getElementById('payMethodNotBank').checked;
+    const refGroup = document.getElementById('markPaidRefGroup');
+    refGroup.style.opacity = notBank ? '.5' : '1';
+    document.getElementById('markPaidRefLabel').textContent = notBank ? 'Bank Reference Number (optional)' : 'Bank Reference Number *';
+}
+
+function confirmMarkPaid() {
+    const date = document.getElementById('markPaidDate').value;
+    if (!date) { alert('Please select a payment date.'); return; }
+    const notBank = document.getElementById('payMethodNotBank').checked;
+    const refInput = document.getElementById('markPaidRef');
+    const refVal = refInput.value.trim();
+    if (!notBank && !refVal) {
+        alert('Bank Reference Number is required for bank transfer payments.');
+        refInput.focus();
+        return;
+    }
+    const method = notBank ? 'not_bank_transfer' : 'bank_transfer';
+    const ref = encodeURIComponent(refVal);
+    window.location = `?action=mark_paid&id=${markPaidId}&month=${markPaidMonth}&payment_date=${date}&payment_method=${method}&bank_ref=${ref}&tab=expenses`;
+}
+
+function cancelMarkPaid() {
+    if (markPaidSelect) markPaidSelect.value = markPaidSelect.dataset.prev;
+    closeModal('markPaidModal');
+}
+
+document.getElementById('markPaidModal').addEventListener('click', (e) => {
+    if (e.target.id === 'markPaidModal') cancelMarkPaid();
+});
+</script>
 
 <?php elseif ($tab === 'my_requests' && !isAdmin()): ?>
 
@@ -515,6 +628,116 @@ $statusStyle = ['pending'=>['yellow','⏳ Pending Review'],'approved'=>['green',
     </table>
   </div>
 </div>
+
+<?php elseif ($tab === 'payment_report' && isAdmin()): ?>
+
+<!-- ── PAYMENT REPORT TAB ── -->
+<?php
+$prPeriod = $_GET['pr_period'] ?? 'current';
+$prToday  = new DateTime();
+
+switch ($prPeriod) {
+    case 'previous':
+        $prFrom  = (clone $prToday)->modify('first day of last month')->format('Y-m-d');
+        $prTo    = (clone $prToday)->modify('last day of last month')->format('Y-m-d');
+        $prLabel = 'Previous Month (' . (clone $prToday)->modify('last month')->format('F Y') . ')';
+        break;
+    case 'custom':
+        $prFrom  = $_GET['pr_from'] ?? date('Y-m-01');
+        $prTo    = $_GET['pr_to']   ?? date('Y-m-d');
+        $prLabel = 'Custom Range: ' . date('d M Y', strtotime($prFrom)) . ' — ' . date('d M Y', strtotime($prTo));
+        break;
+    case 'all':
+        $prFrom = null; $prTo = null;
+        $prLabel = 'All Time';
+        break;
+    case 'current':
+    default:
+        $prPeriod = 'current';
+        $prFrom  = (clone $prToday)->modify('first day of this month')->format('Y-m-d');
+        $prTo    = (clone $prToday)->modify('last day of this month')->format('Y-m-d');
+        $prLabel = 'Current Month (' . $prToday->format('F Y') . ')';
+        break;
+}
+
+$prWhere  = ["status = 'paid'"];
+$prParams = [];
+if ($prFrom && $prTo) {
+    $prWhere[] = "payment_date BETWEEN ? AND ?";
+    $prParams[] = $prFrom;
+    $prParams[] = $prTo;
+}
+$prStmt = $db->prepare("SELECT * FROM expenses WHERE " . implode(' AND ', $prWhere) . " ORDER BY payment_date ASC, id ASC");
+$prStmt->execute($prParams);
+$prRows  = $prStmt->fetchAll();
+$prTotal = array_sum(array_column($prRows, 'total_billable'));
+$methodLabels = ['bank_transfer' => 'Bank Transfer', 'not_bank_transfer' => 'Not Bank Transfer'];
+?>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+  <form method="GET" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+    <input type="hidden" name="tab" value="payment_report">
+    <div class="form-group" style="margin:0">
+      <label style="font-size:11px">Period</label>
+      <select name="pr_period" id="prPeriodSelect" onchange="togglePrCustomRange()">
+        <option value="all"      <?= $prPeriod==='all'?'selected':'' ?>>All Time</option>
+        <option value="previous" <?= $prPeriod==='previous'?'selected':'' ?>>Previous Month</option>
+        <option value="current"  <?= $prPeriod==='current'?'selected':'' ?>>Current Month</option>
+        <option value="custom"   <?= $prPeriod==='custom'?'selected':'' ?>>Custom Range</option>
+      </select>
+    </div>
+    <div class="form-group" id="prFromGroup" style="margin:0;display:<?= $prPeriod==='custom'?'':'none' ?>">
+      <label style="font-size:11px">From</label>
+      <input type="date" name="pr_from" value="<?= h($prFrom ?: date('Y-m-01')) ?>">
+    </div>
+    <div class="form-group" id="prToGroup" style="margin:0;display:<?= $prPeriod==='custom'?'':'none' ?>">
+      <label style="font-size:11px">To</label>
+      <input type="date" name="pr_to" value="<?= h($prTo ?: date('Y-m-d')) ?>">
+    </div>
+    <button type="submit" class="btn btn-ghost btn-sm">Apply</button>
+  </form>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden">
+  <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <div>
+      <strong><?= h($prLabel) ?></strong>
+      <span style="color:var(--text2);font-size:12.5px"> — <?= count($prRows) ?> paid expense<?= count($prRows)===1?'':'s' ?></span>
+    </div>
+    <strong style="color:var(--green);font-size:16px"><?= formatMoney($prTotal) ?></strong>
+  </div>
+  <div class="table-wrap mob-card-table">
+    <table>
+      <thead><tr><th>Payment Date</th><th>Expense Details</th><th>Amount</th><th>Status</th><th>Payment Method</th><th>Bank Reference</th></tr></thead>
+      <tbody>
+        <?php if (empty($prRows)): ?>
+          <tr><td colspan="6" style="text-align:center;color:var(--text2);padding:32px">No paid expenses found for this period.</td></tr>
+        <?php else: foreach ($prRows as $r): ?>
+          <tr>
+            <td data-label="Payment Date" style="white-space:nowrap"><?= $r['payment_date'] ? date('d M Y', strtotime($r['payment_date'])) : '—' ?></td>
+            <td data-label="Expense Details">
+              <span style="font-weight:600"><?= h($r['expense_category']) ?></span>
+              <?php if (!empty($r['client_name'])): ?><br><span style="font-size:11px;color:var(--accent)"><?= h($r['client_name']) ?></span><?php endif; ?>
+              <?php if ($r['description']): ?><br><span style="font-size:11px;color:var(--text2)"><?= h(mb_strimwidth($r['description'],0,40,'…')) ?></span><?php endif; ?>
+            </td>
+            <td data-label="Amount"><strong style="color:var(--green)"><?= formatMoney($r['total_billable']) ?></strong></td>
+            <td data-label="Status"><span class="badge badge-green">Paid</span></td>
+            <td data-label="Payment Method"><?= h($methodLabels[$r['payment_method']] ?? '—') ?></td>
+            <td data-label="Bank Reference"><?= $r['bank_reference'] ? h($r['bank_reference']) : '—' ?></td>
+          </tr>
+        <?php endforeach; endif; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function togglePrCustomRange() {
+    const isCustom = document.getElementById('prPeriodSelect').value === 'custom';
+    document.getElementById('prFromGroup').style.display = isCustom ? '' : 'none';
+    document.getElementById('prToGroup').style.display   = isCustom ? '' : 'none';
+}
+</script>
 
 <?php else: // REPORT TAB ?>
 
