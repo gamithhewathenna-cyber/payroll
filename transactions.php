@@ -40,7 +40,7 @@ $sym = getSetting('currency_symbol', 'Rs.');
 $fWhere  = ["fp.payment_status = 'paid'", "fp.payment_date IS NOT NULL"];
 $fParams = [];
 if ($dateFrom && $dateTo) { $fWhere[] = "fp.payment_date BETWEEN ? AND ?"; $fParams[] = $dateFrom; $fParams[] = $dateTo; }
-$freelanceRows = $db->prepare("SELECT fp.payment_date, fp.invoice_number, fp.project_name, f.freelancer_name, fp.bank_reference, fp.payment_amount
+$freelanceRows = $db->prepare("SELECT fp.payment_date, fp.invoice_number, fp.project_name, f.freelancer_name, fp.bank_reference, fp.payment_amount, fp.invoice_file, fp.invoice_file_name
     FROM freelance_payments fp JOIN freelancers f ON f.id = fp.freelancer_id
     WHERE " . implode(' AND ', $fWhere) . " ORDER BY fp.payment_date DESC");
 $freelanceRows->execute($fParams);
@@ -57,6 +57,8 @@ foreach ($freelanceRows as $r) {
         'details'        => $details,
         'amount'         => (float)$r['payment_amount'],
         'bank_reference' => $r['bank_reference'],
+        'file_path'      => $r['invoice_file'] ?: null,
+        'file_label'     => 'Invoice',
     ];
 }
 
@@ -64,7 +66,7 @@ foreach ($freelanceRows as $r) {
 $eWhere  = ["status = 'paid'", "payment_date IS NOT NULL"];
 $eParams = [];
 if ($dateFrom && $dateTo) { $eWhere[] = "payment_date BETWEEN ? AND ?"; $eParams[] = $dateFrom; $eParams[] = $dateTo; }
-$expenseRows = $db->prepare("SELECT payment_date, expense_category, project_name, client_name, description, bank_reference, total_billable
+$expenseRows = $db->prepare("SELECT payment_date, expense_category, project_name, client_name, description, bank_reference, total_billable, receipt_path, payment_receipt_path
     FROM expenses WHERE " . implode(' AND ', $eWhere) . " ORDER BY payment_date DESC");
 $expenseRows->execute($eParams);
 $expenseRows = $expenseRows->fetchAll();
@@ -80,6 +82,8 @@ foreach ($expenseRows as $r) {
         'details'        => $details,
         'amount'         => (float)$r['total_billable'],
         'bank_reference' => $r['bank_reference'],
+        'file_path'      => $r['payment_receipt_path'] ?: ($r['receipt_path'] ?: null),
+        'file_label'     => 'Receipt',
     ];
 }
 
@@ -150,10 +154,10 @@ pageHeader('Transactions');
   </div>
   <div class="table-wrap mob-card-table">
     <table>
-      <thead><tr><th>Date</th><th>Type</th><th>Description / Details</th><th>Amount</th><th>Bank Reference</th></tr></thead>
+      <thead><tr><th>Date</th><th>Type</th><th>Description / Details</th><th>Amount</th><th>Bank Reference</th><th>Document</th></tr></thead>
       <tbody>
         <?php if (empty($transactions)): ?>
-          <tr><td colspan="5" style="text-align:center;color:var(--text2);padding:32px">No transactions found for this period.</td></tr>
+          <tr><td colspan="6" style="text-align:center;color:var(--text2);padding:32px">No transactions found for this period.</td></tr>
         <?php else: foreach ($transactions as $t): ?>
           <tr>
             <td data-label="Date" style="white-space:nowrap"><?= date('d M Y', strtotime($t['date'])) ?></td>
@@ -167,6 +171,13 @@ pageHeader('Transactions');
             <td data-label="Description / Details"><?= h($t['details']) ?></td>
             <td data-label="Amount"><strong style="color:var(--green)"><?= h($sym) ?> <?= number_format($t['amount'],2) ?></strong></td>
             <td data-label="Bank Reference"><?= $t['bank_reference'] ? h($t['bank_reference']) : '—' ?></td>
+            <td data-label="Document">
+              <?php if (!empty($t['file_path'])): ?>
+                <a href="<?= SITE_URL ?>/<?= h($t['file_path']) ?>" target="_blank" class="btn btn-ghost btn-sm">📄 <?= h($t['file_label']) ?></a>
+              <?php else: ?>
+                <span style="color:var(--text2)">—</span>
+              <?php endif; ?>
+            </td>
           </tr>
         <?php endforeach; endif; ?>
       </tbody>
