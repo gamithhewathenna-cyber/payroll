@@ -682,6 +682,7 @@ HTML;
       <a href="{$siteUrl}/payslips.php" class="nav-item"><span class="nav-icon">📄</span> Payslips</a>
       <a href="{$siteUrl}/clients.php" class="nav-item"><span class="nav-icon">🏢</span> Clients</a>
       <a href="{$siteUrl}/reports.php" class="nav-item"><span class="nav-icon">📊</span> Reports</a>
+      <a href="{$siteUrl}/transactions.php" class="nav-item"><span class="nav-icon">📒</span> Transactions</a>
       <div style="margin:8px 10px 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Admin</div>
       <a href="{$siteUrl}/chat.php" class="nav-item"><span class="nav-icon">🤖</span> AI Assistant</a>
       <a href="{$siteUrl}/users.php" class="nav-item"><span class="nav-icon">👥</span> Users</a>
