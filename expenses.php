@@ -189,8 +189,8 @@ $filterProject  = trim($_GET['project'] ?? '');
 $filterApproval = trim($_GET['approval'] ?? '');
 $tab            = $_GET['tab'] ?? 'expenses';
 
-// Build query — bank-transfer tracking records never appear in the normal expense list
-$where  = ["billing_month = ?", "record_type != 'bank_transfer'"];
+// Build query — bank-transfer tracking records are listed here too, just excluded from totals/stats below
+$where  = ["billing_month = ?"];
 $params = [$filterMonth];
 if ($filterClient)   { $where[] = "client_name LIKE ?";   $params[] = "%$filterClient%"; }
 if ($filterCat)      { $where[] = "expense_category = ?"; $params[] = $filterCat; }
@@ -455,7 +455,9 @@ if (!isAdmin()) {
               <?php if ($e['description']): ?><br><span style="font-size:11px;color:var(--text2)"><?= h(mb_strimwidth($e['description'],0,40,'…')) ?></span><?php endif; ?>
             </td>
             <td data-label="Client">
-              <?php if ($e['billing_type'] === 'internal'): ?>
+              <?php if ($e['record_type'] === 'bank_transfer'): ?>
+                <span class="badge" style="background:rgba(59,130,246,.15);color:var(--accent)">🏦 Bank Transfer</span>
+              <?php elseif ($e['billing_type'] === 'internal'): ?>
                 <span class="badge badge-blue">Internal</span>
               <?php elseif ($e['billing_type'] === 'shared'): ?>
                 <span class="badge badge-yellow">Shared</span>
