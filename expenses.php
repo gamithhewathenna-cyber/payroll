@@ -42,16 +42,36 @@ if ($action === 'status' && $id) {
     header('Location: ' . SITE_URL . '/expenses.php?' . http_build_query(['month'=>$_GET['month']??'','client'=>$_GET['client']??'','cat'=>$_GET['cat']??'','status'=>$_GET['status']??''])); exit;
 }
 if ($action === 'mark_paid' && $id) {
-    $paidDate = !empty($_GET['payment_date']) ? $_GET['payment_date'] : date('Y-m-d');
-    $method   = ($_GET['payment_method'] ?? '') === 'not_bank_transfer' ? 'not_bank_transfer' : 'bank_transfer';
-    $bankRef  = trim($_GET['bank_ref'] ?? '') ?: null;
-    $backTo   = SITE_URL . '/expenses.php?month=' . ($_GET['month'] ?? date('Y-m')) . '&tab=expenses';
+    $paidDate = !empty($_REQUEST['payment_date']) ? $_REQUEST['payment_date'] : date('Y-m-d');
+    $method   = ($_REQUEST['payment_method'] ?? '') === 'not_bank_transfer' ? 'not_bank_transfer' : 'bank_transfer';
+    $bankRef  = trim($_REQUEST['bank_reference'] ?? '') ?: null;
+    $backTo   = SITE_URL . '/expenses.php?month=' . ($_REQUEST['month'] ?? date('Y-m')) . '&tab=expenses';
     if ($method === 'bank_transfer' && !$bankRef) {
         setFlash('error', 'Bank Reference Number is required for bank transfer payments.');
         header('Location: ' . $backTo); exit;
     }
-    $db->prepare("UPDATE expenses SET status='paid', payment_date=?, payment_method=?, bank_reference=? WHERE id=?")
-       ->execute([$paidDate, $method, $bankRef, $id]);
+
+    // Payment receipt upload (PDF/JPG/PNG) — keep the existing one if none is given
+    $paymentReceiptPath = null;
+    if (!empty($_FILES['payment_receipt']['name']) && $_FILES['payment_receipt']['error'] === UPLOAD_ERR_OK) {
+        $ext = strtolower(pathinfo($_FILES['payment_receipt']['name'], PATHINFO_EXTENSION));
+        if (in_array($ext, ['pdf', 'jpg', 'jpeg', 'png'], true)) {
+            $dir = 'uploads/payment_receipts/';
+            if (!is_dir(__DIR__.'/'.$dir)) mkdir(__DIR__.'/'.$dir, 0755, true);
+            $fname = 'payrcpt_' . time() . '_' . mt_rand(1000, 9999) . '.' . $ext;
+            if (move_uploaded_file($_FILES['payment_receipt']['tmp_name'], __DIR__.'/'.$dir.$fname)) {
+                $paymentReceiptPath = $dir . $fname;
+            }
+        }
+    }
+    if (!$paymentReceiptPath) {
+        $pr = $db->prepare("SELECT payment_receipt_path FROM expenses WHERE id=?");
+        $pr->execute([$id]);
+        $paymentReceiptPath = $pr->fetchColumn() ?: null;
+    }
+
+    $db->prepare("UPDATE expenses SET status='paid', payment_date=?, payment_method=?, bank_reference=?, payment_receipt_path=? WHERE id=?")
+       ->execute([$paidDate, $method, $bankRef, $paymentReceiptPath, $id]);
     setFlash('success', 'Expense marked as paid.');
     header('Location: ' . $backTo); exit;
 }
@@ -457,6 +477,9 @@ if (!isAdmin()) {
               <?php if (isAdmin() && !empty($e['receipt_path'])): ?>
                 <a href="<?= SITE_URL ?>/<?= h($e['receipt_path']) ?>" target="_blank" class="btn btn-ghost btn-sm" title="View receipt">📄 Receipt</a>
               <?php endif; ?>
+              <?php if (isAdmin() && !empty($e['payment_receipt_path'])): ?>
+                <a href="<?= SITE_URL ?>/<?= h($e['payment_receipt_path']) ?>" target="_blank" class="btn btn-ghost btn-sm" title="View payment receipt">🧾 Payment Receipt</a>
+              <?php endif; ?>
               <a href="?action=edit&id=<?= $e['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm">Edit</a>
               <a href="?action=delete&id=<?= $e['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete this expense?')">Del</a>
             </div></td>
@@ -479,36 +502,45 @@ if (!isAdmin()) {
       <div class="modal-title">✓ Mark as Paid</div>
       <button class="modal-close" onclick="cancelMarkPaid()">×</button>
     </div>
-    <div class="modal-body">
-      <div class="form-group" style="margin-bottom:14px">
-        <label>Payment Date *</label>
-        <input type="date" id="markPaidDate">
-      </div>
-      <div class="form-group" style="margin-bottom:14px">
-        <label>Payment Method</label>
-        <div style="display:flex;gap:16px;margin-top:6px">
-          <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
-            <input type="radio" name="payMethod" id="payMethodBank" checked onchange="toggleBankRefRequired()"> Bank Transfer
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
-            <input type="radio" name="payMethod" id="payMethodNotBank" onchange="toggleBankRefRequired()"> Not Bank Transfer
-          </label>
+    <form method="POST" action="?action=mark_paid" enctype="multipart/form-data" id="markPaidForm" onsubmit="return validateMarkPaid()">
+      <input type="hidden" name="id" id="markPaidIdInput">
+      <input type="hidden" name="month" id="markPaidMonthInput">
+      <div class="modal-body">
+        <div class="form-group" style="margin-bottom:14px">
+          <label>Payment Date *</label>
+          <input type="date" name="payment_date" id="markPaidDate" required>
+        </div>
+        <div class="form-group" style="margin-bottom:14px">
+          <label>Payment Method</label>
+          <div style="display:flex;gap:16px;margin-top:6px">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+              <input type="radio" name="payment_method" value="bank_transfer" id="payMethodBank" checked onchange="toggleBankRefRequired()"> Bank Transfer
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+              <input type="radio" name="payment_method" value="not_bank_transfer" id="payMethodNotBank" onchange="toggleBankRefRequired()"> Not Bank Transfer
+            </label>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:14px" id="markPaidRefGroup">
+          <label id="markPaidRefLabel">Bank Reference Number *</label>
+          <input type="text" name="bank_reference" id="markPaidRef" placeholder="e.g. TXN123456789">
+        </div>
+        <div class="form-group" style="margin-bottom:16px">
+          <label>Payment Receipt (optional)</label>
+          <input type="file" name="payment_receipt" id="markPaidReceipt" accept=".pdf,.jpg,.jpeg,.png">
+          <span style="font-size:11px;color:var(--text2)">PDF, JPG or PNG</span>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button type="submit" class="btn btn-success" style="width:auto;padding:8px 20px">✓ Confirm Paid</button>
+          <button type="button" class="btn btn-ghost" style="width:auto;padding:8px 20px;background:var(--bg3);color:var(--text2)" onclick="cancelMarkPaid()">Cancel</button>
         </div>
       </div>
-      <div class="form-group" style="margin-bottom:16px" id="markPaidRefGroup">
-        <label id="markPaidRefLabel">Bank Reference Number *</label>
-        <input type="text" id="markPaidRef" placeholder="e.g. TXN123456789">
-      </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn btn-success" style="width:auto;padding:8px 20px" onclick="confirmMarkPaid()">✓ Confirm Paid</button>
-        <button class="btn btn-ghost" style="width:auto;padding:8px 20px;background:var(--bg3);color:var(--text2)" onclick="cancelMarkPaid()">Cancel</button>
-      </div>
-    </div>
+    </form>
   </div>
 </div>
 
 <script>
-let markPaidId = null, markPaidMonth = '<?= h($filterMonth) ?>', markPaidSelect = null;
+let markPaidSelect = null;
 
 function handleStatusChange(sel, id, month) {
     if (sel.value === 'paid') {
@@ -519,11 +551,12 @@ function handleStatusChange(sel, id, month) {
 }
 
 function openMarkPaid(id, month, selectEl) {
-    markPaidId = id;
-    markPaidMonth = month;
     markPaidSelect = selectEl || null;
+    document.getElementById('markPaidIdInput').value = id;
+    document.getElementById('markPaidMonthInput').value = month;
     document.getElementById('markPaidDate').value = new Date().toISOString().slice(0,10);
     document.getElementById('markPaidRef').value = '';
+    document.getElementById('markPaidReceipt').value = '';
     document.getElementById('payMethodBank').checked = true;
     toggleBankRefRequired();
     openModal('markPaidModal');
@@ -536,20 +569,15 @@ function toggleBankRefRequired() {
     document.getElementById('markPaidRefLabel').textContent = notBank ? 'Bank Reference Number (optional)' : 'Bank Reference Number *';
 }
 
-function confirmMarkPaid() {
-    const date = document.getElementById('markPaidDate').value;
-    if (!date) { alert('Please select a payment date.'); return; }
-    const notBank = document.getElementById('payMethodNotBank').checked;
+function validateMarkPaid() {
+    const notBank  = document.getElementById('payMethodNotBank').checked;
     const refInput = document.getElementById('markPaidRef');
-    const refVal = refInput.value.trim();
-    if (!notBank && !refVal) {
+    if (!notBank && !refInput.value.trim()) {
         alert('Bank Reference Number is required for bank transfer payments.');
         refInput.focus();
-        return;
+        return false;
     }
-    const method = notBank ? 'not_bank_transfer' : 'bank_transfer';
-    const ref = encodeURIComponent(refVal);
-    window.location = `?action=mark_paid&id=${markPaidId}&month=${markPaidMonth}&payment_date=${date}&payment_method=${method}&bank_ref=${ref}&tab=expenses`;
+    return true;
 }
 
 function cancelMarkPaid() {
@@ -708,10 +736,10 @@ $methodLabels = ['bank_transfer' => 'Bank Transfer', 'not_bank_transfer' => 'Not
   </div>
   <div class="table-wrap mob-card-table">
     <table>
-      <thead><tr><th>Payment Date</th><th>Expense Details</th><th>Amount</th><th>Status</th><th>Payment Method</th><th>Bank Reference</th></tr></thead>
+      <thead><tr><th>Payment Date</th><th>Expense Details</th><th>Amount</th><th>Status</th><th>Payment Method</th><th>Bank Reference</th><th>Receipt</th></tr></thead>
       <tbody>
         <?php if (empty($prRows)): ?>
-          <tr><td colspan="6" style="text-align:center;color:var(--text2);padding:32px">No paid expenses found for this period.</td></tr>
+          <tr><td colspan="7" style="text-align:center;color:var(--text2);padding:32px">No paid expenses found for this period.</td></tr>
         <?php else: foreach ($prRows as $r): ?>
           <tr>
             <td data-label="Payment Date" style="white-space:nowrap"><?= $r['payment_date'] ? date('d M Y', strtotime($r['payment_date'])) : '—' ?></td>
@@ -724,6 +752,7 @@ $methodLabels = ['bank_transfer' => 'Bank Transfer', 'not_bank_transfer' => 'Not
             <td data-label="Status"><span class="badge badge-green">Paid</span></td>
             <td data-label="Payment Method"><?= h($methodLabels[$r['payment_method']] ?? '—') ?></td>
             <td data-label="Bank Reference"><?= $r['bank_reference'] ? h($r['bank_reference']) : '—' ?></td>
+            <td data-label="Receipt"><?php if (!empty($r['payment_receipt_path'])): ?><a href="<?= SITE_URL ?>/<?= h($r['payment_receipt_path']) ?>" target="_blank" style="color:var(--accent)">📄 View</a><?php else: ?>—<?php endif; ?></td>
           </tr>
         <?php endforeach; endif; ?>
       </tbody>
