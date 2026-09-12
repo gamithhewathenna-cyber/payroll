@@ -525,7 +525,7 @@ if (!isAdmin()) {
           <label id="markPaidRefLabel">Bank Reference Number *</label>
           <input type="text" name="bank_reference" id="markPaidRef" placeholder="e.g. TXN123456789">
         </div>
-        <div class="form-group" style="margin-bottom:16px">
+        <div class="form-group" style="margin-bottom:16px" id="markPaidReceiptGroup">
           <label>Payment Receipt (optional)</label>
           <input type="file" name="payment_receipt" id="markPaidReceipt" accept=".pdf,.jpg,.jpeg,.png">
           <span style="font-size:11px;color:var(--text2)">PDF, JPG or PNG</span>
@@ -563,10 +563,13 @@ function openMarkPaid(id, month, selectEl) {
 }
 
 function toggleBankRefRequired() {
-    const notBank  = document.getElementById('payMethodNotBank').checked;
-    const refGroup = document.getElementById('markPaidRefGroup');
+    const notBank      = document.getElementById('payMethodNotBank').checked;
+    const refGroup     = document.getElementById('markPaidRefGroup');
+    const receiptGroup = document.getElementById('markPaidReceiptGroup');
     refGroup.style.opacity = notBank ? '.5' : '1';
     document.getElementById('markPaidRefLabel').textContent = notBank ? 'Bank Reference Number (optional)' : 'Bank Reference Number *';
+    receiptGroup.hidden = notBank;
+    if (notBank) document.getElementById('markPaidReceipt').value = '';
 }
 
 function validateMarkPaid() {
