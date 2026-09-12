@@ -1182,10 +1182,10 @@ $rStats = $rStats->fetch();
                 <input type="radio" name="record_type" value="bank_transfer_expense" id="addRecordBankTransferExpense" onchange="toggleRecordType('add')"> Bank Transfer (Normal Expense)
               </label>
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
-                <input type="radio" name="record_type" value="bank_transfer" id="addRecordBankTransfer" onchange="toggleRecordType('add')"> Bank Transfer
+                <input type="radio" name="record_type" value="bank_transfer" id="addRecordBankTransfer" onchange="toggleRecordType('add')"> Bank Transfer - Report Only
               </label>
             </div>
-            <span style="font-size:11px;color:var(--text2)">"Bank Transfer (Normal Expense)" still counts toward Revenue/Profit and expense totals like a normal expense, and is recorded as paid — it also appears in the Payment Report. Plain "Bank Transfer" is excluded from Revenue/Profit and all expense totals — it's only tracked in the Payment Report.</span>
+            <span style="font-size:11px;color:var(--text2)">"Bank Transfer (Normal Expense)" still counts toward Revenue/Profit and expense totals like a normal expense, and is recorded as paid — it also appears in the Payment Report. "Bank Transfer - Report Only" is excluded from Revenue/Profit and all expense totals — it's only tracked in the Payment Report.</span>
           </div>
           <?php endif; ?>
           <div class="form-group"><label>Expense Date *</label><input type="date" name="expense_date" required value="<?= date('Y-m-d') ?>"></div>
