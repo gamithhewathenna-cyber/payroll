@@ -87,8 +87,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $clientName  = $billingType === 'internal' ? null : trim($d['client_name'] ?? '');
     $rateKey     = 'rate_' . strtolower($currency) . '_lkr';
     $exRate      = $currency === 'LKR' ? 1.0 : (float)(getSetting($rateKey, '1'));
-    $costLKR     = $cost * $exRate;
-    $total       = round($costLKR + ($costLKR * $markup / 100) + $addFee, 2);
+
+    // "Bank Transfer" record type (Add Expense only, admin only): a pure bank-transaction
+    // log entry — excluded from billing/revenue/profit, auto-settled, and tracked only in
+    // the Payment Report tab. Never reachable for staff or for the edit action.
+    $recordType = ($action === 'add' && isAdmin() && ($d['record_type'] ?? '') === 'bank_transfer') ? 'bank_transfer' : 'expense';
+    $bankRef = null; $paymentReceiptPath = null; $paymentDate = null; $paymentMethod = null;
+    if ($recordType === 'bank_transfer') {
+        $billingType = 'internal';
+        $clientName  = null;
+        $markup      = 0;
+        $addFee      = 0;
+        $bankRef     = trim($d['bank_reference'] ?? '');
+        if ($bankRef === '') {
+            setFlash('error', 'Bank Reference Number is required for a Bank Transfer record.');
+            header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m'))); exit;
+        }
+        $paymentDate   = $d['expense_date'];
+        $paymentMethod = 'bank_transfer';
+
+        if (!empty($_FILES['payment_receipt']['name']) && $_FILES['payment_receipt']['error'] === UPLOAD_ERR_OK) {
+            $ext = strtolower(pathinfo($_FILES['payment_receipt']['name'], PATHINFO_EXTENSION));
+            if (in_array($ext, ['pdf', 'jpg', 'jpeg', 'png'], true)) {
+                $dir = 'uploads/payment_receipts/';
+                if (!is_dir(__DIR__.'/'.$dir)) mkdir(__DIR__.'/'.$dir, 0755, true);
+                $fname = 'payrcpt_' . time() . '_' . mt_rand(1000, 9999) . '.' . $ext;
+                if (move_uploaded_file($_FILES['payment_receipt']['tmp_name'], __DIR__.'/'.$dir.$fname)) {
+                    $paymentReceiptPath = $dir . $fname;
+                }
+            }
+        }
+    }
+
+    $costLKR = $cost * $exRate;
+    $total   = round($costLKR + ($costLKR * $markup / 100) + $addFee, 2);
+    $status  = $recordType === 'bank_transfer' ? 'paid' : ($d['status'] ?? 'pending');
 
     // Receipt upload (PDF only) — keep the existing one if editing and no new file is given
     $receiptPath = null;
@@ -128,9 +161,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'add') {
-        $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
-           ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$d['status']??'pending',trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$_SESSION['full_name']]);
-        setFlash('success', 'Expense added.');
+        $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,record_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at,payment_date,payment_method,bank_reference,payment_receipt_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW(),?,?,?,?)")
+           ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$recordType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$status,trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$_SESSION['full_name'],$paymentDate,$paymentMethod,$bankRef,$paymentReceiptPath]);
+        setFlash('success', $recordType === 'bank_transfer' ? '🏦 Bank transfer recorded.' : 'Expense added.');
     } elseif ($action === 'edit') {
         $stmt = $db->prepare("SELECT exchange_rate, currency FROM expenses WHERE id=?");
         $stmt->execute([$id]);
@@ -156,8 +189,8 @@ $filterProject  = trim($_GET['project'] ?? '');
 $filterApproval = trim($_GET['approval'] ?? '');
 $tab            = $_GET['tab'] ?? 'expenses';
 
-// Build query
-$where  = ["billing_month = ?"];
+// Build query — bank-transfer tracking records never appear in the normal expense list
+$where  = ["billing_month = ?", "record_type != 'bank_transfer'"];
 $params = [$filterMonth];
 if ($filterClient)   { $where[] = "client_name LIKE ?";   $params[] = "%$filterClient%"; }
 if ($filterCat)      { $where[] = "expense_category = ?"; $params[] = $filterCat; }
@@ -180,7 +213,7 @@ $stats = $db->prepare("SELECT
     COALESCE(SUM(CASE WHEN status = 'paid' AND billing_type != 'client_paid' THEN total_billable ELSE 0 END),0) as paid_amt,
     COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable - (cost_amount * exchange_rate) ELSE 0 END),0) as markup_earned,
     COALESCE(SUM(CASE WHEN approval_status = 'pending_approval' THEN 1 ELSE 0 END),0) as pending_approvals
-FROM expenses WHERE billing_month = ?");
+FROM expenses WHERE billing_month = ? AND record_type != 'bank_transfer'");
 $stats->execute([$filterMonth]);
 $stats = $stats->fetch();
 
@@ -562,7 +595,7 @@ function toggleBankRefRequired() {
     const receiptGroup = document.getElementById('markPaidReceiptGroup');
     refGroup.style.opacity = notBank ? '.5' : '1';
     document.getElementById('markPaidRefLabel').textContent = notBank ? 'Bank Reference Number (optional)' : 'Bank Reference Number *';
-    receiptGroup.hidden = notBank;
+    receiptGroup.style.display = notBank ? 'none' : '';
     if (notBank) document.getElementById('markPaidReceipt').value = '';
 }
 
@@ -786,7 +819,7 @@ function togglePrCustomRange() {
 
 <?php
 // Build report WHERE clause
-$rWhere  = "billing_month=?";
+$rWhere  = "billing_month=? AND record_type != 'bank_transfer'";
 $rParams = [$filterMonth];
 if ($reportClient) { $rWhere .= " AND client_name=?"; $rParams[] = $reportClient; }
 
@@ -1124,8 +1157,22 @@ $rStats = $rStats->fetch();
       <button class="modal-close" onclick="closeModal('addModal')">×</button>
     </div>
     <div class="modal-body">
-      <form method="POST" action="?action=add" enctype="multipart/form-data">
+      <form method="POST" action="?action=add" enctype="multipart/form-data" onsubmit="return validateAddExpense()">
         <div class="form-grid">
+          <?php if (isAdmin()): ?>
+          <div class="form-group full" style="margin-bottom:4px">
+            <label>Record Type</label>
+            <div style="display:flex;gap:16px;margin-top:6px">
+              <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+                <input type="radio" name="record_type" value="expense" id="addRecordExpense" checked onchange="toggleRecordType('add')"> Not Bank Transfer (Normal Expense)
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+                <input type="radio" name="record_type" value="bank_transfer" id="addRecordBankTransfer" onchange="toggleRecordType('add')"> Bank Transfer
+              </label>
+            </div>
+            <span style="font-size:11px;color:var(--text2)">Bank Transfer records are excluded from Revenue/Profit and all expense totals — they're only tracked in the Payment Report.</span>
+          </div>
+          <?php endif; ?>
           <div class="form-group"><label>Expense Date *</label><input type="date" name="expense_date" required value="<?= date('Y-m-d') ?>"></div>
           <div class="form-group"><label>Billing Month *</label><input type="month" name="billing_month" required value="<?= $filterMonth ?>"></div>
           <div class="form-group"><label>Expense Category *</label>
@@ -1135,7 +1182,7 @@ $rStats = $rStats->fetch();
             </select>
           </div>
           <div class="form-group"><label>Project / Work Name</label><input name="project_name" placeholder="e.g. BMW Engine Build"></div>
-          <div class="form-group"><label>Billing Type</label>
+          <div class="form-group" id="addBillingTypeGroup"><label>Billing Type</label>
             <select name="billing_type" id="addBillingType" onchange="toggleClient('add')">
               <option value="client" selected>Client Expense (We Pay)</option>
               <option value="shared">Shared (Multiple Clients)</option>
@@ -1174,15 +1221,15 @@ $rStats = $rStats->fetch();
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;font-weight:600;color:var(--text2)" id="addLkrVal">—</div>
             <span style="font-size:11px;color:var(--text2)" id="addRateLabel"></span>
           </div>
-          <div class="form-group"><label>Markup % (optional)</label><input type="number" name="markup_percentage" id="addMarkup" step="0.01" value="0" placeholder="0" oninput="calcTotal('add')"></div>
-          <div class="form-group"><label>Additional Service Fee</label><input type="number" name="additional_fee" id="addFee" step="0.01" value="0" placeholder="0.00" oninput="calcTotal('add')"></div>
+          <div class="form-group" id="addMarkupGroup"><label>Markup % (optional)</label><input type="number" name="markup_percentage" id="addMarkup" step="0.01" value="0" placeholder="0" oninput="calcTotal('add')"></div>
+          <div class="form-group" id="addFeeGroup"><label>Additional Service Fee</label><input type="number" name="additional_fee" id="addFee" step="0.01" value="0" placeholder="0.00" oninput="calcTotal('add')"></div>
           <div class="form-group full">
             <label>Total Billable Amount (Auto Calculated — in LKR)</label>
             <div style="background:var(--bg3);border:2px solid var(--green);border-radius:8px;padding:10px 14px;font-size:20px;font-weight:800;color:var(--green)" id="addTotal">0.00</div>
             <input type="hidden" name="total_billable" id="addTotalHidden" value="0">
           </div>
           <div class="form-group full"><label>Description</label><textarea name="description" rows="2" placeholder="Brief description of the expense..."></textarea></div>
-          <div class="form-group"><label>Status</label>
+          <div class="form-group" id="addStatusGroup"><label>Status</label>
             <select name="status">
               <option value="pending">Pending</option>
               <option value="invoiced">Invoiced</option>
@@ -1190,8 +1237,10 @@ $rStats = $rStats->fetch();
               <option value="cancelled">Cancelled</option>
             </select>
           </div>
-          <div class="form-group"><label>Receipt (PDF)</label><input type="file" name="receipt" accept="application/pdf"></div>
+          <div class="form-group" id="addOrigReceiptGroup"><label>Receipt (PDF)</label><input type="file" name="receipt" accept="application/pdf"></div>
           <div class="form-group full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Internal notes..."></textarea></div>
+          <div class="form-group" id="addBankRefGroup" style="display:none"><label id="addBankRefLabel">Bank Reference Number *</label><input type="text" name="bank_reference" id="addBankRef" placeholder="e.g. TXN123456789"></div>
+          <div class="form-group" id="addPaymentReceiptGroup" style="display:none"><label>Payment Receipt (optional)</label><input type="file" name="payment_receipt" accept=".pdf,.jpg,.jpeg,.png"><span style="font-size:11px;color:var(--text2)">PDF, JPG or PNG</span></div>
         </div>
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">Save Expense</button>
@@ -1307,6 +1356,45 @@ function toggleClient(prefix) {
     // Show client-paid notice
     const notice = document.getElementById(prefix + 'ClientPaidNotice');
     if (notice) notice.style.display = type === 'client_paid' ? 'block' : 'none';
+}
+
+// Add Expense: switch between a normal (billable) expense and a pure Bank Transfer
+// tracking record — the latter hides all billing fields and shows bank ref/receipt instead.
+function toggleRecordType(prefix) {
+    const bankTransferRadio = document.getElementById(prefix + 'RecordBankTransfer');
+    if (!bankTransferRadio) return;
+    const isBankTransfer = bankTransferRadio.checked;
+
+    ['BillingTypeGroup', 'MarkupGroup', 'FeeGroup', 'StatusGroup', 'OrigReceiptGroup'].forEach(suffix => {
+        const el = document.getElementById(prefix + suffix);
+        if (el) el.style.display = isBankTransfer ? 'none' : '';
+    });
+    const clientField = document.getElementById(prefix + 'ClientField');
+    if (clientField) clientField.style.display = isBankTransfer ? 'none' : '';
+    if (isBankTransfer) {
+        const notice = document.getElementById(prefix + 'ClientPaidNotice');
+        if (notice) notice.style.display = 'none';
+    } else {
+        toggleClient(prefix);
+    }
+
+    const bankRefGroup = document.getElementById(prefix + 'BankRefGroup');
+    const receiptGroup = document.getElementById(prefix + 'PaymentReceiptGroup');
+    if (bankRefGroup) bankRefGroup.style.display = isBankTransfer ? '' : 'none';
+    if (receiptGroup) receiptGroup.style.display = isBankTransfer ? '' : 'none';
+}
+
+function validateAddExpense() {
+    const bankTransferRadio = document.getElementById('addRecordBankTransfer');
+    if (bankTransferRadio && bankTransferRadio.checked) {
+        const ref = document.getElementById('addBankRef');
+        if (!ref.value.trim()) {
+            alert('Bank Reference Number is required for a Bank Transfer record.');
+            ref.focus();
+            return false;
+        }
+    }
+    return true;
 }
 
 // Auto-calculate total billable with currency conversion

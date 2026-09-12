@@ -73,7 +73,7 @@ $totalSalariesPaid = $empSalariesPaid + $freelanceSalariesPaid;
 
 // ── OPERATIONAL EXPENSES ──────────────────────────────────
 // Company expenses (internal + client billing we pay) — exclude client_paid
-$bizExpenses = $db->prepare("SELECT COALESCE(SUM(cost_amount * exchange_rate),0) FROM expenses WHERE billing_month=? AND billing_type IN ('internal','client','shared')");
+$bizExpenses = $db->prepare("SELECT COALESCE(SUM(cost_amount * exchange_rate),0) FROM expenses WHERE billing_month=? AND billing_type IN ('internal','client','shared') AND record_type != 'bank_transfer'");
 $bizExpenses->execute([$month]); $bizExpenses = (float)$bizExpenses->fetchColumn();
 
 // ── TOTAL EXPENSES ────────────────────────────────────────
@@ -85,7 +85,7 @@ $invoiceRevenue = $db->prepare("SELECT COALESCE(SUM(total),0) FROM invoices WHER
 $invoiceRevenue->execute([$month]); $invoiceRevenue = (float)$invoiceRevenue->fetchColumn();
 
 // All client billable expenses (approved, what we charge clients)
-$billableRevenue = $db->prepare("SELECT COALESCE(SUM(total_billable),0) FROM expenses WHERE billing_month=? AND billing_type IN ('client','shared') AND approval_status='approved'");
+$billableRevenue = $db->prepare("SELECT COALESCE(SUM(total_billable),0) FROM expenses WHERE billing_month=? AND billing_type IN ('client','shared') AND approval_status='approved' AND record_type != 'bank_transfer'");
 $billableRevenue->execute([$month]); $billableRevenue = (float)$billableRevenue->fetchColumn();
 
 $totalRevenue = $invoiceRevenue + $billableRevenue;
@@ -108,14 +108,14 @@ $prevRev->execute([$prevMonth]); $prevRev = (float)$prevRev->fetchColumn();
 $prevSal = $db->prepare("SELECT COALESCE(SUM(final_salary),0) FROM payroll WHERE month=?");
 $prevSal->execute([$prevMonth]); $prevSal = (float)$prevSal->fetchColumn();
 
-$prevExp = $db->prepare("SELECT COALESCE(SUM(cost_amount * exchange_rate),0) FROM expenses WHERE billing_month=? AND billing_type IN ('internal','client','shared')");
+$prevExp = $db->prepare("SELECT COALESCE(SUM(cost_amount * exchange_rate),0) FROM expenses WHERE billing_month=? AND billing_type IN ('internal','client','shared') AND record_type != 'bank_transfer'");
 $prevExp->execute([$prevMonth]); $prevExp = (float)$prevExp->fetchColumn();
 
 // ── RECENT ACTIVITY ───────────────────────────────────────
 $recentInvoices  = $db->prepare("SELECT i.*, c.company_name FROM invoices i JOIN clients c ON c.id=i.client_id ORDER BY i.created_at DESC LIMIT 5");
 $recentInvoices->execute(); $recentInvoices = $recentInvoices->fetchAll();
 
-$recentExpenses  = $db->prepare("SELECT * FROM expenses ORDER BY created_at DESC LIMIT 5");
+$recentExpenses  = $db->prepare("SELECT * FROM expenses WHERE record_type != 'bank_transfer' ORDER BY created_at DESC LIMIT 5");
 $recentExpenses->execute(); $recentExpenses = $recentExpenses->fetchAll();
 
 // Month-over-month helper
@@ -242,7 +242,7 @@ pageHeader('Dashboard');
     <div class="card-title">📊 Expense Breakdown — <?= $monthLabel ?></div>
     <div style="display:flex;flex-direction:column;gap:10px">
       <?php
-      $expByType = $db->prepare("SELECT billing_type, COALESCE(SUM(cost_amount * exchange_rate),0) as total FROM expenses WHERE billing_month=? GROUP BY billing_type");
+      $expByType = $db->prepare("SELECT billing_type, COALESCE(SUM(cost_amount * exchange_rate),0) as total FROM expenses WHERE billing_month=? AND record_type != 'bank_transfer' GROUP BY billing_type");
       $expByType->execute([$month]);
       $expByType = $expByType->fetchAll();
       $typeLabels = ['internal'=>'🏢 Internal','client'=>'👤 Client (We Pay)','shared'=>'🔗 Shared','client_paid'=>'💳 Client-Paid'];
