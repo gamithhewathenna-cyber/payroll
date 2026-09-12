@@ -469,16 +469,10 @@ if (!isAdmin()) {
                 <option value="paid"      <?= $e['status']==='paid'     ?'selected':'' ?>>Paid</option>
                 <option value="cancelled" <?= $e['status']==='cancelled'?'selected':'' ?>>Cancelled</option>
               </select>
-              <?php if ($e['status'] === 'paid' && !empty($e['bank_reference'])): ?>
-                <div style="font-size:10px;color:var(--text2);margin-top:2px">🏦 <?= h($e['bank_reference']) ?></div>
-              <?php endif; ?>
             </td>
             <td data-label=""><div class="mob-actions">
               <?php if (isAdmin() && !empty($e['receipt_path'])): ?>
                 <a href="<?= SITE_URL ?>/<?= h($e['receipt_path']) ?>" target="_blank" class="btn btn-ghost btn-sm" title="View receipt">📄 Receipt</a>
-              <?php endif; ?>
-              <?php if (isAdmin() && !empty($e['payment_receipt_path'])): ?>
-                <a href="<?= SITE_URL ?>/<?= h($e['payment_receipt_path']) ?>" target="_blank" class="btn btn-ghost btn-sm" title="View payment receipt">🧾 Payment Receipt</a>
               <?php endif; ?>
               <a href="?action=edit&id=<?= $e['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm">Edit</a>
               <a href="?action=delete&id=<?= $e['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete this expense?')">Del</a>
