@@ -227,7 +227,8 @@ switch ($dateRange) {
 $searchInv    = trim($_GET['search'] ?? '');
 
 $where = ["i.invoice_type=?"]; $params = [$typeFilter];
-if ($filter)       { $where[] = 'i.status=?';                          $params[] = $filter; }
+if ($filter === 'pending') { $where[] = "i.status NOT IN ('paid','cancelled')"; }
+elseif ($filter)   { $where[] = 'i.status=?';                          $params[] = $filter; }
 if ($filterClient) { $where[] = 'i.client_id=?';                       $params[] = $filterClient; }
 if ($df)           { $where[] = 'i.issue_date >= ?';                   $params[] = $df; }
 if ($dt)           { $where[] = 'i.issue_date <= ?';                   $params[] = $dt; }
@@ -279,7 +280,7 @@ pageHeader('Invoices');
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-bottom:20px">
   <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value"><?= $stats['total'] ?></div></div>
   <div class="stat-card blue"><div class="stat-label">Drafts</div><div class="stat-value"><?= $stats['drafts'] ?></div></div>
-  <div class="stat-card yellow"><div class="stat-label">Sent / Pending</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['sent_amt'],2) ?></div></div>
+  <div class="stat-card yellow" style="cursor:pointer" onclick="window.location='?tab=<?= h($tab) ?>&status=pending'"><div class="stat-label">Sent / Pending</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['sent_amt'],2) ?></div><div class="stat-sub">Click to view pending invoices</div></div>
   <?php if ($tab === 'invoices'): ?>
   <div class="stat-card green"><div class="stat-label">Paid</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['paid_amt'],2) ?></div></div>
   <div class="stat-card red"><div class="stat-label">Overdue</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['overdue_amt'],2) ?></div></div>
@@ -341,8 +342,9 @@ $activeRange = $dateRange;
     <!-- Status + Client dropdowns -->
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <input type="hidden" name="range" id="rangeInput" value="<?= h($activeRange) ?>">
-      <select name="status" style="width:130px" onchange="this.form.submit()">
+      <select name="status" style="width:160px" onchange="this.form.submit()">
         <option value="">All Status</option>
+        <option value="pending" <?= $filter==='pending'?'selected':'' ?>>⏳ Pending Invoices</option>
         <?php foreach (['draft','sent','paid','overdue','cancelled'] as $st): ?>
           <option value="<?= $st ?>" <?= $filter===$st?'selected':'' ?>><?= ucfirst($st) ?></option>
         <?php endforeach; ?>
