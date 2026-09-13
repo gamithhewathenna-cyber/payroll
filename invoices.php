@@ -232,6 +232,12 @@ $searchInv    = trim($_GET['search'] ?? '');
 
 $where = ["i.invoice_type=?"]; $params = [$typeFilter];
 if ($filter === 'pending') { $where[] = "i.status NOT IN ('paid','cancelled')"; }
+elseif ($filter === 'overdue') {
+    // status='overdue' is only ever set by the daily reminder cron (send_invoice_reminders.php) —
+    // if that cron isn't configured on the host, no invoice ever gets flagged that way even when
+    // genuinely past due. Compute it directly from the due date instead so this filter always works.
+    $where[] = "i.status NOT IN ('paid','cancelled') AND i.due_date IS NOT NULL AND i.due_date < CURDATE()";
+}
 elseif ($filter)   { $where[] = 'i.status=?';                          $params[] = $filter; }
 if ($filterClient) { $where[] = 'i.client_id=?';                       $params[] = $filterClient; }
 if ($df)           { $where[] = 'i.issue_date >= ?';                   $params[] = $df; }
@@ -251,7 +257,7 @@ $stats = $db->prepare("SELECT
     SUM(CASE WHEN status='draft' THEN 1 ELSE 0 END) as drafts,
     SUM(CASE WHEN status='sent' THEN total ELSE 0 END) as sent_amt,
     SUM(CASE WHEN status='paid' THEN total ELSE 0 END) as paid_amt,
-    SUM(CASE WHEN status='overdue' THEN total ELSE 0 END) as overdue_amt
+    SUM(CASE WHEN status NOT IN ('paid','cancelled') AND due_date IS NOT NULL AND due_date < CURDATE() THEN total ELSE 0 END) as overdue_amt
 FROM invoices WHERE invoice_type=?");
 $stats->execute([$typeFilter]);
 $stats = $stats->fetch();
@@ -287,7 +293,7 @@ pageHeader('Invoices');
   <div class="stat-card yellow" style="cursor:pointer" onclick="window.location='?tab=<?= h($tab) ?>&status=pending'"><div class="stat-label">Sent / Pending</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['sent_amt'],2) ?></div><div class="stat-sub">Click to view pending invoices</div></div>
   <?php if ($tab === 'invoices'): ?>
   <div class="stat-card green"><div class="stat-label">Paid</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['paid_amt'],2) ?></div></div>
-  <div class="stat-card red"><div class="stat-label">Overdue</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['overdue_amt'],2) ?></div></div>
+  <div class="stat-card red" style="cursor:pointer" onclick="window.location='?tab=<?= h($tab) ?>&status=overdue&range=all'"><div class="stat-label">Overdue</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['overdue_amt'],2) ?></div><div class="stat-sub">Click to view overdue invoices</div></div>
   <?php endif; ?>
 </div>
 
@@ -394,7 +400,8 @@ $activeRange = $dateRange;
             <td data-label="Client" class="inv-client-cell"><?= h($inv['company_name']) ?></td>
             <td data-label="Date" style="font-size:12px;color:var(--text2)"><?= date('d M Y',strtotime($inv['issue_date'])) ?></td>
             <?php if ($tab === 'invoices'): ?>
-            <td data-label="Due" style="font-size:12px;color:<?= $inv['status']==='overdue'?'var(--red)':'var(--text2)' ?>"><?= $inv['due_date'] ? date('d M Y',strtotime($inv['due_date'])) : '—' ?></td>
+            <?php $isOverdue = !in_array($inv['status'], ['paid','cancelled']) && $inv['due_date'] && $inv['due_date'] < date('Y-m-d'); ?>
+            <td data-label="Due" style="font-size:12px;color:<?= $isOverdue?'var(--red)':'var(--text2)' ?>"><?= $inv['due_date'] ? date('d M Y',strtotime($inv['due_date'])) : '—' ?></td>
             <?php endif; ?>
             <td data-label="Total"><strong style="color:var(--green)"><?= $sym ?> <?= number_format($inv['total'],2) ?></strong>
               <?php if (($inv['advance_amount']??0) > 0): ?>
