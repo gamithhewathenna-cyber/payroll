@@ -354,7 +354,7 @@ $activeRange = $dateRange;
       <input type="hidden" name="range" id="rangeInput" value="<?= h($activeRange) ?>">
       <select name="status" style="width:160px" onchange="this.form.submit()">
         <option value="">All Status</option>
-        <option value="pending" <?= $filter==='pending'?'selected':'' ?>>⏳ Pending Invoices</option>
+        <option value="pending" <?= $filter==='pending'?'selected':'' ?>>Pending Invoices</option>
         <?php foreach (['draft','sent','paid','overdue','cancelled'] as $st): ?>
           <option value="<?= $st ?>" <?= $filter===$st?'selected':'' ?>><?= ucfirst($st) ?></option>
         <?php endforeach; ?>
