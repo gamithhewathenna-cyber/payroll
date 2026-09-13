@@ -197,6 +197,10 @@ $dateRange    = $_GET['range']  ?? 'month'; // month | week | lastmonth | custom
 $monthSel     = $_GET['month']  ?? '';
 $typeFilter   = $tab === 'quotations' ? 'quotation' : 'invoice';
 
+// "Pending Invoices" is a global status view — it should never be silently narrowed
+// by whatever date range happens to be active, so it always covers all time.
+if ($filter === 'pending') { $dateRange = 'all'; }
+
 // Compute date boundaries
 switch ($dateRange) {
     case 'week':
