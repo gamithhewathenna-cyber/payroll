@@ -506,7 +506,7 @@ if (!isAdmin()) {
               <?php endif; ?>
             </td>
             <td data-label="Status">
-              <select data-prev="<?= $e['status'] ?>" onchange="handleStatusChange(this, <?= $e['id'] ?>, '<?= $filterMonth ?>')"
+              <select data-prev="<?= $e['status'] ?>" data-billing="<?= h($e['billing_type']) ?>" onchange="handleStatusChange(this, <?= $e['id'] ?>, '<?= $filterMonth ?>')"
                 style="background:transparent;border:none;font-size:12px;font-weight:600;cursor:pointer;padding:3px 6px;border-radius:12px;
                 color:<?= ['pending'=>'var(--yellow)','invoiced'=>'var(--accent)','paid'=>'var(--green)','cancelled'=>'var(--red)'][$e['status']] ?>">
                 <option value="pending"   <?= $e['status']==='pending'  ?'selected':'' ?>>Pending</option>
@@ -582,7 +582,9 @@ if (!isAdmin()) {
 let markPaidSelect = null;
 
 function handleStatusChange(sel, id, month) {
-    if (sel.value === 'paid') {
+    // Client-Paid expenses are settled directly by the client — no bank ref/receipt to collect,
+    // so skip the Mark as Paid popup entirely and just update the status like any other change.
+    if (sel.value === 'paid' && sel.dataset.billing !== 'client_paid') {
         openMarkPaid(id, month, sel);
     } else {
         updateStatus(id, sel.value, month);
