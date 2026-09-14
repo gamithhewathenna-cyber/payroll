@@ -730,7 +730,9 @@ switch ($prPeriod) {
         break;
 }
 
-$prWhere  = ["status = 'paid'"];
+// Client-Paid expenses are collected directly by the client via their own client card —
+// not a payment we make/track, so they never belong in this report.
+$prWhere  = ["status = 'paid'", "billing_type != 'client_paid'"];
 $prParams = [];
 if ($prFrom && $prTo) {
     $prWhere[] = "payment_date BETWEEN ? AND ?";
