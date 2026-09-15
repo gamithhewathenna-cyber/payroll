@@ -37,7 +37,8 @@ switch ($period) {
 $sym = getSetting('currency_symbol', 'Rs.');
 
 // ── Freelance payments (paid) ───────────────────────────────
-$fWhere  = ["fp.payment_status = 'paid'", "fp.payment_date IS NOT NULL"];
+// Same rows as the Freelance Payment Report page, for consistency.
+$fWhere  = ["fp.payment_status = 'paid'"];
 $fParams = [];
 if ($dateFrom && $dateTo) { $fWhere[] = "fp.payment_date BETWEEN ? AND ?"; $fParams[] = $dateFrom; $fParams[] = $dateTo; }
 $freelanceRows = $db->prepare("SELECT fp.payment_date, fp.invoice_number, fp.project_name, f.freelancer_name, fp.bank_reference, fp.payment_amount, fp.invoice_file, fp.invoice_file_name
@@ -63,9 +64,9 @@ foreach ($freelanceRows as $r) {
 }
 
 // ── Expense payments (paid) ─────────────────────────────────
-// Client-Paid expenses are collected directly by the client via their own client card —
-// not a payment we make/track, so they never belong in this combined view.
-$eWhere  = ["status = 'paid'", "payment_date IS NOT NULL", "billing_type != 'client_paid'"];
+// Same rows as the Expenses → Payment Report tab, so the two stay consistent:
+// paid, not Client-Paid (collected directly by the client via their own client card).
+$eWhere  = ["status = 'paid'", "billing_type != 'client_paid'"];
 $eParams = [];
 if ($dateFrom && $dateTo) { $eWhere[] = "payment_date BETWEEN ? AND ?"; $eParams[] = $dateFrom; $eParams[] = $dateTo; }
 $expenseRows = $db->prepare("SELECT payment_date, expense_category, project_name, client_name, description, bank_reference, total_billable, receipt_path, payment_receipt_path
@@ -89,8 +90,8 @@ foreach ($expenseRows as $r) {
     ];
 }
 
-// Merge, newest first
-usort($transactions, fn($a, $b) => strcmp($b['date'], $a['date']));
+// Merge, newest first (rows with no payment date recorded sort last)
+usort($transactions, fn($a, $b) => strcmp($b['date'] ?? '', $a['date'] ?? ''));
 
 $totalAmount     = array_sum(array_column($transactions, 'amount'));
 $freelanceTotal  = array_sum(array_column($freelanceRows, 'payment_amount'));
@@ -98,7 +99,7 @@ $expenseTotal    = array_sum(array_column($expenseRows, 'total_billable'));
 
 // Year options for the yearly picker — from the earliest transaction year to this year
 $earliestYear = (int)date('Y');
-foreach ($transactions as $t) { $y = (int)date('Y', strtotime($t['date'])); if ($y < $earliestYear) $earliestYear = $y; }
+foreach ($transactions as $t) { if (!$t['date']) continue; $y = (int)date('Y', strtotime($t['date'])); if ($y < $earliestYear) $earliestYear = $y; }
 $yearOptions = range((int)date('Y'), $earliestYear);
 
 pageHeader('Transactions');
@@ -162,7 +163,7 @@ pageHeader('Transactions');
           <tr><td colspan="6" style="text-align:center;color:var(--text2);padding:32px">No transactions found for this period.</td></tr>
         <?php else: foreach ($transactions as $t): ?>
           <tr>
-            <td data-label="Date" style="white-space:nowrap"><?= date('d M Y', strtotime($t['date'])) ?></td>
+            <td data-label="Date" style="white-space:nowrap"><?= $t['date'] ? date('d M Y', strtotime($t['date'])) : '—' ?></td>
             <td data-label="Type">
               <?php if ($t['type'] === 'Freelance'): ?>
                 <span class="badge badge-blue">🧑‍💻 Freelance</span>
