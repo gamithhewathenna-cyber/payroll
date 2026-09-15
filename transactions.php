@@ -63,7 +63,9 @@ foreach ($freelanceRows as $r) {
 }
 
 // ── Expense payments (paid) ─────────────────────────────────
-$eWhere  = ["status = 'paid'", "payment_date IS NOT NULL"];
+// Client-Paid expenses are collected directly by the client via their own client card —
+// not a payment we make/track, so they never belong in this combined view.
+$eWhere  = ["status = 'paid'", "payment_date IS NOT NULL", "billing_type != 'client_paid'"];
 $eParams = [];
 if ($dateFrom && $dateTo) { $eWhere[] = "payment_date BETWEEN ? AND ?"; $eParams[] = $dateFrom; $eParams[] = $dateTo; }
 $expenseRows = $db->prepare("SELECT payment_date, expense_category, project_name, client_name, description, bank_reference, total_billable, receipt_path, payment_receipt_path
