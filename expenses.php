@@ -733,8 +733,10 @@ switch ($prPeriod) {
 }
 
 // Client-Paid expenses are collected directly by the client via their own client card —
-// not a payment we make/track, so they never belong in this report.
-$prWhere  = ["status = 'paid'", "billing_type != 'client_paid'"];
+// not a payment we make/track, so they never belong in this report. Likewise, only actual
+// bank transfers belong here — a "Not Bank Transfer" payment (cash/other) has no bank
+// transaction to reconcile, so it's excluded too.
+$prWhere  = ["status = 'paid'", "billing_type != 'client_paid'", "payment_method = 'bank_transfer'"];
 $prParams = [];
 if ($prFrom && $prTo) {
     $prWhere[] = "payment_date BETWEEN ? AND ?";

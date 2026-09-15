@@ -64,9 +64,10 @@ foreach ($freelanceRows as $r) {
 }
 
 // ── Expense payments (paid) ─────────────────────────────────
-// Same rows as the Expenses → Payment Report tab, so the two stay consistent:
-// paid, not Client-Paid (collected directly by the client via their own client card).
-$eWhere  = ["status = 'paid'", "billing_type != 'client_paid'"];
+// Same rows as the Expenses → Payment Report tab, so the two stay consistent: paid, not
+// Client-Paid (collected directly by the client), and only actual bank transfers — a "Not
+// Bank Transfer" payment has no bank transaction to reconcile, so it's excluded too.
+$eWhere  = ["status = 'paid'", "billing_type != 'client_paid'", "payment_method = 'bank_transfer'"];
 $eParams = [];
 if ($dateFrom && $dateTo) { $eWhere[] = "payment_date BETWEEN ? AND ?"; $eParams[] = $dateFrom; $eParams[] = $dateTo; }
 $expenseRows = $db->prepare("SELECT payment_date, expense_category, project_name, client_name, description, bank_reference, total_billable, receipt_path, payment_receipt_path
