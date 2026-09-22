@@ -173,7 +173,7 @@ function handleReadOnlyAction($db, $type, $d, $sym) {
 
         if (($inv['advance_amount'] ?? 0) > 0) {
             $advDate = !empty($inv['advance_date']) ? ' (' . date('d M Y', strtotime($inv['advance_date'])) . ')' : '';
-            $bal     = max(0, $inv['total'] - $inv['advance_amount']);
+            $bal     = $inv['status'] === 'paid' ? 0 : max(0, $inv['total'] - $inv['advance_amount']);
             $msg .= "Advance Paid{$advDate}: -{$tSym} " . number_format($conv($inv['advance_amount']), 2) . "\n";
             $msg .= "**Balance Due: {$tSym} " . number_format($conv($bal), 2) . "**\n";
         }

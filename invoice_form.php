@@ -385,7 +385,8 @@ $invRate    = $id ? (float)($inv['inv_rate']??1) : 1;
       <?php if ($id && ($inv['advance_amount']??0) > 0): ?>
       <div class="form-group" style="margin-bottom:12px">
         <label>Balance Due</label>
-        <div style="font-weight:700;color:var(--yellow)"><?= $sym ?> <?= number_format(max(0,$inv['total']-$inv['advance_amount']),2) ?></div>
+        <?php $formBalDue = $inv['status'] === 'paid' ? 0 : max(0,$inv['total']-$inv['advance_amount']); ?>
+        <div style="font-weight:700;color:<?= $formBalDue > 0 ? 'var(--yellow)' : 'var(--green)' ?>"><?= $sym ?> <?= number_format($formBalDue,2) ?></div>
       </div>
       <?php endif; ?>
       <?php endif; ?>
