@@ -103,6 +103,126 @@ $earliestYear = (int)date('Y');
 foreach ($transactions as $t) { if (!$t['date']) continue; $y = (int)date('Y', strtotime($t['date'])); if ($y < $earliestYear) $earliestYear = $y; }
 $yearOptions = range((int)date('Y'), $earliestYear);
 
+// ── PDF export ──────────────────────────────────────────────
+if (($_GET['export'] ?? '') === 'pdf') {
+
+    function txPdfEscape($text) {
+        $text = @iconv('UTF-8', 'Windows-1252//TRANSLIT', $text);
+        if ($text === false) $text = '';
+        return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $text);
+    }
+
+    function buildTransactionsPdf($rows, $periodLabel, $companyName, $sym, $totalAmount) {
+        $marginX = 50; $rightX = 545; $pageTop = 792; $pageBottom = 60;
+        $pages = []; $stream = ''; $y = $pageTop;
+        $BLACK = [17,17,17]; $GRAY = [102,102,102]; $WHITE = [255,255,255];
+
+        $setColor = function($c) use (&$stream) { $stream .= sprintf("%.3F %.3F %.3F rg\n", $c[0]/255, $c[1]/255, $c[2]/255); };
+        $put = function($x, $y, $size, $bold, $text, $color = null) use (&$stream, $setColor, $BLACK) {
+            $setColor($color ?? $BLACK);
+            $font = $bold ? 'F2' : 'F1';
+            $stream .= "BT /{$font} {$size} Tf {$x} {$y} Td (" . txPdfEscape($text) . ") Tj ET\n";
+        };
+        $rule = function($x1, $y1, $x2, $y2, $width = 1, $color = null) use (&$stream, $setColor, $BLACK) {
+            $c = $color ?? $BLACK;
+            $stream .= sprintf("%.3F %.3F %.3F RG\n%d w\n%d %d m %d %d l S\n1 w\n", $c[0]/255,$c[1]/255,$c[2]/255, $width, $x1,$y1,$x2,$y2);
+        };
+        $fillRect = function($x, $y, $w, $h, $color) use (&$stream, $setColor) {
+            $setColor($color);
+            $stream .= "{$x} {$y} {$w} {$h} re f\n";
+        };
+        $newPage = function() use (&$pages, &$stream, &$y, $pageTop) { $pages[] = $stream; $stream = ''; $y = $pageTop; };
+
+        $colX = ['date' => $marginX, 'type' => 110, 'details' => 175, 'ref' => 415, 'amt' => 480];
+        $tableHeader = function() use (&$y, $put, $fillRect, $marginX, $rightX, $WHITE, $colX) {
+            $fillRect($marginX, $y - 14, $rightX - $marginX, 18, [17,17,17]);
+            $put($colX['date'] + 4, $y - 9, 8, true, 'DATE', $WHITE);
+            $put($colX['type'],     $y - 9, 8, true, 'TYPE', $WHITE);
+            $put($colX['details'],  $y - 9, 8, true, 'DESCRIPTION / DETAILS', $WHITE);
+            $put($colX['ref'],      $y - 9, 8, true, 'BANK REF', $WHITE);
+            $put($colX['amt'],      $y - 9, 8, true, 'AMOUNT', $WHITE);
+            $y -= 28;
+        };
+
+        // Report header
+        $put($marginX, $y, 16, true, $companyName); $y -= 20;
+        $put($marginX, $y, 13, true, 'Transactions Report'); $y -= 16;
+        $put($marginX, $y, 10, false, $periodLabel, $GRAY); $y -= 12;
+        $put($marginX, $y, 9, false, 'Generated: ' . date('d M Y H:i'), $GRAY); $y -= 20;
+
+        $tableHeader();
+        foreach ($rows as $r) {
+            if ($y < $pageBottom) { $newPage(); $tableHeader(); }
+            $put($colX['date'] + 4, $y, 9, false, $r['date'] ? date('d M Y', strtotime($r['date'])) : '—');
+            $put($colX['type'],     $y, 9, false, $r['type']);
+            $put($colX['details'],  $y, 9, false, mb_strimwidth($r['details'], 0, 42, '…'));
+            $put($colX['ref'],      $y, 9, false, $r['bank_reference'] ?: '—');
+            $put($colX['amt'],      $y, 9, false, $sym . ' ' . number_format($r['amount'], 2));
+            $y -= 6;
+            $rule($marginX, $y, $rightX, $y, 1, [230,230,230]);
+            $y -= 14;
+        }
+
+        if (empty($rows)) {
+            $put($marginX, $y, 10, false, 'No transactions found for this period.', $GRAY);
+            $y -= 20;
+        }
+
+        if ($y < $pageBottom + 40) { $newPage(); }
+        $y -= 8;
+        $rule($marginX, $y, $rightX, $y, 2, $BLACK); $y -= 18;
+        $put($colX['details'], $y, 11, true, 'TOTAL (' . count($rows) . ' transaction' . (count($rows) === 1 ? '' : 's') . ')');
+        $put($colX['amt'], $y, 11, true, $sym . ' ' . number_format($totalAmount, 2));
+
+        $pages[] = $stream;
+
+        // ── Assemble PDF binary ──
+        $numPages = count($pages);
+        $objs = [];
+        $objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+        $kids = [];
+        for ($i = 0; $i < $numPages; $i++) { $kids[] = (3 + $i * 2) . " 0 R"; }
+        $fontObj1 = 3 + $numPages * 2;
+        $fontObj2 = $fontObj1 + 1;
+        $objs[2] = "<< /Type /Pages /Kids [" . implode(' ', $kids) . "] /Count {$numPages} >>";
+        for ($i = 0; $i < $numPages; $i++) {
+            $pageObjNum    = 3 + $i * 2;
+            $contentObjNum = 4 + $i * 2;
+            $objs[$pageObjNum] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 {$fontObj1} 0 R /F2 {$fontObj2} 0 R >> >> /Contents {$contentObjNum} 0 R >>";
+            $content = $pages[$i];
+            $objs[$contentObjNum] = "<< /Length " . strlen($content) . " >>\nstream\n{$content}endstream";
+        }
+        $objs[$fontObj1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+        $objs[$fontObj2] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+
+        ksort($objs);
+        $pdf = "%PDF-1.4\n";
+        $offsets = [];
+        foreach ($objs as $num => $body) {
+            $offsets[$num] = strlen($pdf);
+            $pdf .= "{$num} 0 obj\n{$body}\nendobj\n";
+        }
+        $xrefOffset = strlen($pdf);
+        $maxNum = max(array_keys($objs));
+        $pdf .= "xref\n0 " . ($maxNum + 1) . "\n0000000000 65535 f \n";
+        for ($n = 1; $n <= $maxNum; $n++) {
+            $pdf .= isset($offsets[$n]) ? (str_pad($offsets[$n], 10, '0', STR_PAD_LEFT) . " 00000 n \n") : "0000000000 00000 f \n";
+        }
+        $pdf .= "trailer\n<< /Size " . ($maxNum + 1) . " /Root 1 0 R >>\nstartxref\n{$xrefOffset}\n%%EOF";
+        return $pdf;
+    }
+
+    $companyName = getSetting('company_name', SITE_NAME);
+    $pdfBytes    = buildTransactionsPdf($transactions, $periodLabel, $companyName, $sym, $totalAmount);
+    $filename    = 'Transactions_Report_' . date('Y-m-d') . '.pdf';
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . strlen($pdfBytes));
+    echo $pdfBytes;
+    exit;
+}
+
 pageHeader('Transactions');
 ?>
 
@@ -144,6 +264,7 @@ pageHeader('Transactions');
       </select>
     </div>
     <button type="submit" class="btn btn-primary">Apply</button>
+    <a href="?<?= http_build_query(array_merge($_GET, ['export'=>'pdf'])) ?>" class="btn btn-ghost">⬇️ Download PDF</a>
   </form>
 </div>
 
