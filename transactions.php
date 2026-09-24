@@ -151,9 +151,12 @@ pageHeader('Transactions');
 </div>
 
 <!-- Filter -->
+<style>
+#txFilterForm input, #txFilterForm select, #txFilterForm .btn { height: 38px; }
+</style>
 <div class="card" style="margin-bottom:20px">
   <div class="card-title">🔎 Filter</div>
-  <form method="GET" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+  <form method="GET" id="txFilterForm" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
     <div class="form-group" style="margin:0">
       <label>View</label>
       <select name="period" id="periodSelect" onchange="toggleTxPeriod()">
