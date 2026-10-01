@@ -101,6 +101,8 @@ pageHeader('System Users');
             <td data-label="Role">
               <?php if ($u['role'] === 'admin'): ?>
                 <span class="badge badge-yellow">Admin</span>
+              <?php elseif ($u['role'] === 'accounts_manager'): ?>
+                <span class="badge badge-green">Accounts Manager</span>
               <?php else: ?>
                 <span class="badge badge-blue">Staff</span>
               <?php endif; ?>
@@ -108,6 +110,8 @@ pageHeader('System Users');
             <td data-label="Access">
               <?php if ($u['role'] === 'admin'): ?>
                 <span style="font-size:12px;color:var(--text2)">All pages</span>
+              <?php elseif ($u['role'] === 'accounts_manager'): ?>
+                <span style="font-size:12px;color:var(--text2)">All pages (view only, no Admin)</span>
               <?php else: ?>
                 <div style="display:flex;flex-wrap:wrap;gap:4px">
                   <?php
@@ -162,6 +166,7 @@ pageHeader('System Users');
             <label>Role</label>
             <select name="role" id="addRole" onchange="togglePermissions('add')">
               <option value="admin">Admin — Full access to everything</option>
+              <option value="accounts_manager">Accounts Manager — View all pages except Admin</option>
               <option value="staff" selected>Staff — Custom page access</option>
             </select>
           </div>
@@ -217,10 +222,11 @@ pageHeader('System Users');
             <label>Role</label>
             <select name="role" id="editRole" onchange="togglePermissions('edit')">
               <option value="admin" <?= $editRow['role']==='admin'?'selected':'' ?>>Admin — Full access</option>
+              <option value="accounts_manager" <?= $editRow['role']==='accounts_manager'?'selected':'' ?>>Accounts Manager — View all pages except Admin</option>
               <option value="staff" <?= $editRow['role']==='staff'?'selected':'' ?>>Staff — Custom page access</option>
             </select>
           </div>
-          <div class="form-group" id="editPermissions" style="<?= $editRow['role']==='admin'?'display:none':'' ?>">
+          <div class="form-group" id="editPermissions" style="<?= in_array($editRow['role'],['admin','accounts_manager'])?'display:none':'' ?>">
             <label>Page Access</label>
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
               <?php foreach ($allPages as $key => [$icon, $label]): ?>
@@ -252,7 +258,7 @@ pageHeader('System Users');
 function togglePermissions(prefix) {
     const role = document.getElementById(prefix + 'Role').value;
     const perms = document.getElementById(prefix + 'Permissions');
-    if (perms) perms.style.display = role === 'admin' ? 'none' : '';
+    if (perms) perms.style.display = (role === 'admin' || role === 'accounts_manager') ? 'none' : '';
 }
 function selectAll(prefix, check) {
     const perms = document.getElementById(prefix + 'Permissions');

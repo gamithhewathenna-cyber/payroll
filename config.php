@@ -60,6 +60,41 @@ function isStaff() {
     return isset($_SESSION['role']) && $_SESSION['role'] === 'staff';
 }
 
+function isAccountsManager() {
+    return isset($_SESSION['role']) && $_SESSION['role'] === 'accounts_manager';
+}
+
+// True if the current request could change data. Every mutation in this app (add/edit/
+// delete/status/approve/mark_paid/etc.) is triggered by a POST, or a GET carrying an
+// `action` parameter — so blocking both (beyond any explicitly whitelisted safe action,
+// e.g. chat.php's own "send a message" request) is enough to make a page read-only.
+function isMutatingRequest($safeActions = []) {
+    $action = $_POST['action'] ?? $_GET['action'] ?? '';
+    if ($action !== '') {
+        return !in_array($action, $safeActions, true);
+    }
+    return $_SERVER['REQUEST_METHOD'] !== 'GET';
+}
+
+// Admins get full access. Accounts Managers get read-only access to every page that calls
+// this instead of requireAdmin() — they can open and view the page, but any action that
+// would change data is blocked outright. Use on pages Accounts Manager should see; leave
+// Users/Settings/Roles & Permissions on requireAdmin()/isSuperAdmin() as-is. Pass
+// $safeActions for a page whose own read-only operations are themselves POST+action
+// (e.g. chat.php sending a message is action=chat; only its action=execute writes data).
+function requireAdminOrReadOnly($safeActions = []) {
+    requireLogin();
+    if (isAdmin()) return;
+    if (!isAccountsManager()) {
+        header('Location: ' . SITE_URL . '/dashboard.php?denied=1');
+        exit;
+    }
+    if (isMutatingRequest($safeActions)) {
+        header('Location: ' . SITE_URL . '/dashboard.php?denied=1');
+        exit;
+    }
+}
+
 function currentUserId() {
     return $_SESSION['user_id'] ?? null;
 }
@@ -131,6 +166,7 @@ function requireAccess($page) {
     requireLogin();
     if ($_SESSION['role'] === 'admin') return; // admin always allowed
     if ($_SESSION['role'] === 'staff' && canAccess($page)) return; // staff with permission
+    if (isAccountsManager() && !isMutatingRequest()) return; // accounts manager: view-only, every page
     header('Location: ' . SITE_URL . '/dashboard.php');
     exit;
 }

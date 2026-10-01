@@ -1,7 +1,7 @@
 <?php
 require_once 'config.php';
 require_once 'includes/layout.php';
-requireAdmin();
+requireAdminOrReadOnly();
 $db = getDB();
 
 $filterMonth = $_GET['month'] ?? date('Y-m');

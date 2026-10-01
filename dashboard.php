@@ -16,8 +16,8 @@ $monthLabel = date('F Y', strtotime($month . '-01'));
 $prevMonth  = date('Y-m', strtotime($month . '-01 -1 month'));
 $nextMonth  = date('Y-m', strtotime($month . '-01 +1 month'));
 
-// ── Employee dashboard (non-admin) ─────────────────────────
-if (!isAdmin()) {
+// ── Employee dashboard (non-admin, non-accounts-manager) ───
+if (!isAdmin() && !isAccountsManager()) {
     $empDbId = $_SESSION['employee_db_id'];
     $myPayslip = null;
     if ($empDbId) {

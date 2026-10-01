@@ -2,7 +2,9 @@
 require_once 'config.php';
 require_once 'includes/layout.php';
 require_once 'includes/vendor_approval.php';
-requireAdmin();
+// 'chat' is the read-only "send a message / ask a question" request — only 'execute'
+// (confirming a proposed write action) actually changes data, so that's what stays blocked.
+requireAdminOrReadOnly(['chat']);
 $db = getDB();
 
 // Read-only report/lookup actions — these run immediately (no confirm-card round trip),

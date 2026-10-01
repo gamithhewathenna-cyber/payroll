@@ -688,6 +688,21 @@ HTML;
       <a href="{$siteUrl}/users.php" class="nav-item"><span class="nav-icon">👥</span> Users</a>
       <a href="{$siteUrl}/settings.php" class="nav-item"><span class="nav-icon">⚙️</span> Settings</a>
 HTML;
+    } elseif ($role === 'accounts_manager') {
+        echo <<<HTML
+      <a href="{$siteUrl}/employees.php" class="nav-item"><span class="nav-icon">👤</span> Employees</a>
+      <a href="{$siteUrl}/invoices.php" class="nav-item"><span class="nav-icon">📋</span> Invoices</a>
+      <a href="{$siteUrl}/freelance.php" class="nav-item"><span class="nav-icon">🧑‍💻</span> Freelance</a>
+      <a href="{$siteUrl}/expenses.php" class="nav-item"><span class="nav-icon">🧾</span> Expenses</a>
+      <a href="{$siteUrl}/payroll.php" class="nav-item"><span class="nav-icon">💰</span> Payroll</a>
+      <a href="{$siteUrl}/commissions.php" class="nav-item"><span class="nav-icon">📈</span> Commissions</a>
+      <a href="{$siteUrl}/allowances.php" class="nav-item"><span class="nav-icon">🎁</span> Allowances</a>
+      <a href="{$siteUrl}/payslips.php" class="nav-item"><span class="nav-icon">📄</span> Payslips</a>
+      <a href="{$siteUrl}/clients.php" class="nav-item"><span class="nav-icon">🏢</span> Clients</a>
+      <a href="{$siteUrl}/reports.php" class="nav-item"><span class="nav-icon">📊</span> Reports</a>
+      <a href="{$siteUrl}/transactions.php" class="nav-item"><span class="nav-icon">📒</span> Transactions</a>
+      <a href="{$siteUrl}/chat.php" class="nav-item"><span class="nav-icon">🤖</span> AI Assistant</a>
+HTML;
     } elseif ($role === 'staff') {
         $pages = [
             'employees'   => ['👤', 'Employees',   'employees.php'],
@@ -717,7 +732,8 @@ HTML;
 
     // Job title in footer
     $jobTitle = $_SESSION['job_title'] ?? '';
-    $roleDisplay = $jobTitle ?: ($role === 'admin' ? 'Super Admin' : ucfirst($role));
+    $roleLabels = ['admin' => 'Super Admin', 'accounts_manager' => 'Accounts Manager'];
+    $roleDisplay = $jobTitle ?: ($roleLabels[$role] ?? ucfirst($role));
 
     echo <<<HTML
     </nav>

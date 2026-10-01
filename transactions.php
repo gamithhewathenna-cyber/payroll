@@ -1,7 +1,7 @@
 <?php
 require_once 'config.php';
 require_once 'includes/layout.php';
-requireAdmin();
+requireAdminOrReadOnly();
 $db = getDB();
 
 // ── Period filter ──────────────────────────────────────────

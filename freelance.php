@@ -2,7 +2,7 @@
 require_once 'config.php';
 require_once 'includes/layout.php';
 require_once 'includes/vendor_approval.php';
-requireAdmin();
+requireAdminOrReadOnly();
 $db = getDB();
 
 $action = $_REQUEST['action'] ?? '';
