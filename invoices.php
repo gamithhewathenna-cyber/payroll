@@ -1,7 +1,7 @@
 <?php
 require_once 'config.php';
 require_once 'includes/layout.php';
-requireAdminOrReadOnly();
+requireAdminOrQueued();
 $db = getDB();
 
 $action = $_REQUEST['action'] ?? '';
@@ -102,6 +102,12 @@ function nextInvoiceNumber($db, $type = 'invoice') {
 
 // DELETE
 if ($action === 'delete' && $id) {
+    if (!isAdmin()) {
+        $db->prepare("INSERT INTO invoice_change_requests (invoice_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
+           ->execute([$id, 'delete', json_encode(['invoice_id'=>$id]), $_SESSION['full_name']]);
+        setFlash('success', '✅ Delete request submitted for Admin approval.');
+        header('Location: ' . SITE_URL . '/invoices.php?tab=' . ($_GET['tab'] ?? 'invoices')); exit;
+    }
     $db->prepare("DELETE FROM invoices WHERE id=?")->execute([$id]);
     setFlash('success', 'Deleted.');
     header('Location: ' . SITE_URL . '/invoices.php?tab=' . ($_GET['tab'] ?? 'invoices')); exit;
@@ -110,14 +116,23 @@ if ($action === 'delete' && $id) {
 // STATUS UPDATE
 if ($action === 'status' && $id) {
     $s = $_GET['s'] ?? 'draft';
+    if (!isAdmin()) {
+        $db->prepare("INSERT INTO invoice_change_requests (invoice_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
+           ->execute([$id, 'status', json_encode(['status'=>$s]), $_SESSION['full_name']]);
+        setFlash('success', '✅ Status change submitted for Admin approval.');
+        header('Location: ' . SITE_URL . '/invoices.php?tab=' . ($_GET['tab'] ?? 'invoices')); exit;
+    }
     $pd = $s === 'paid' ? date('Y-m-d') : null;
     $db->prepare("UPDATE invoices SET status=?, paid_date=? WHERE id=?")->execute([$s, $pd, $id]);
     setFlash('success', 'Status updated.');
     header('Location: ' . SITE_URL . '/invoices.php?tab=' . ($_GET['tab'] ?? 'invoices')); exit;
 }
 
-// SAVE (add/edit)
+// SAVE (add/edit) — this legacy inline form is no longer linked from the UI (New/Edit
+// both go through invoice_form.php, which has its own approval-queue handling); kept
+// here for backward compatibility, admin-only.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, ['add','edit'])) {
+    if (!isAdmin()) { header('Location: ' . SITE_URL . '/dashboard.php?denied=1'); exit; }
     $d        = $_POST;
     $type     = $d['invoice_type'] ?? 'invoice';
     $invNo    = $action === 'add' ? nextInvoiceNumber($db, $type) : trim($d['invoice_number']);
@@ -277,8 +292,136 @@ $sym = $S['currency_symbol'] ?? 'Rs.';
 
 $statusColor = ['draft'=>'blue','sent'=>'yellow','paid'=>'green','overdue'=>'red','cancelled'=>'red'];
 
+// ── Admin: handle change request approvals (must be before pageHeader) ──
+if (isAdmin()) {
+    $reqAction = $_GET['req_action'] ?? '';
+    $reqId     = (int)($_GET['req_id'] ?? 0);
+
+    if ($reqAction === 'approve_req' && $reqId) {
+        $req = $db->prepare("SELECT * FROM invoice_change_requests WHERE id=?");
+        $req->execute([$reqId]);
+        $req = $req->fetch();
+        if ($req) {
+            $p = json_decode($req['payload'], true);
+            if ($req['change_type'] === 'save') {
+                if ($req['invoice_id']) {
+                    $db->prepare("UPDATE invoices SET invoice_type=?,client_id=?,issue_date=?,due_date=?,billing_month=?,subtotal=?,discount_pct=?,discount_amt=?,tax_pct=?,tax_amt=?,total=?,inv_currency=?,inv_rate=?,status=?,notes=?,terms=?,manual_client_data=?,advance_amount=?,advance_date=? WHERE id=?")
+                       ->execute([$p['invoice_type'],$p['client_id'],$p['issue_date'],$p['due_date'],$p['billing_month'],$p['subtotal'],$p['discount_pct'],$p['discount_amt'],$p['tax_pct'],$p['tax_amt'],$p['total'],$p['inv_currency'],$p['inv_rate'],$p['status'],$p['notes'],$p['terms'],$p['manual_client_data'],$p['advance_amount'],$p['advance_date'],$req['invoice_id']]);
+                    $invId = $req['invoice_id'];
+                    $db->prepare("DELETE FROM invoice_items WHERE invoice_id=?")->execute([$invId]);
+                } else {
+                    $invNo = nextInvoiceNumber($db, $p['invoice_type']);
+                    $db->prepare("INSERT INTO invoices (invoice_number,invoice_type,client_id,issue_date,due_date,billing_month,subtotal,discount_pct,discount_amt,tax_pct,tax_amt,total,inv_currency,inv_rate,status,notes,terms,created_by,manual_client_data,advance_amount,advance_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                       ->execute([$invNo,$p['invoice_type'],$p['client_id'],$p['issue_date'],$p['due_date'],$p['billing_month'],$p['subtotal'],$p['discount_pct'],$p['discount_amt'],$p['tax_pct'],$p['tax_amt'],$p['total'],$p['inv_currency'],$p['inv_rate'],$p['status'],$p['notes'],$p['terms'],$req['requested_by'],$p['manual_client_data'],$p['advance_amount'],$p['advance_date']]);
+                    $invId = $db->lastInsertId();
+                }
+                foreach ($p['items'] as [$desc,$subdesc,$qty,$price,$amt,$itype,$expId,$ord]) {
+                    $db->prepare("INSERT INTO invoice_items (invoice_id,item_type,description,quantity,unit_price,amount,expense_id,sort_order) VALUES (?,?,?,?,?,?,?,?)")
+                       ->execute([$invId,$itype,$desc.($subdesc?'|||'.$subdesc:''),$qty,$price,$amt,$expId?:null,$ord]);
+                }
+            } elseif ($req['change_type'] === 'delete') {
+                $db->prepare("DELETE FROM invoices WHERE id=?")->execute([$req['invoice_id']]);
+            } elseif ($req['change_type'] === 'status') {
+                $pd = $p['status'] === 'paid' ? date('Y-m-d') : null;
+                $db->prepare("UPDATE invoices SET status=?, paid_date=? WHERE id=?")->execute([$p['status'], $pd, $req['invoice_id']]);
+            }
+            $db->prepare("UPDATE invoice_change_requests SET status='approved', reviewed_at=NOW() WHERE id=?")->execute([$reqId]);
+            setFlash('success', '✅ Change approved and applied successfully.');
+        }
+        header('Location: ' . SITE_URL . '/invoices.php?tab=' . $tab); exit;
+    }
+
+    if ($reqAction === 'reject_req' && $reqId) {
+        $db->prepare("UPDATE invoice_change_requests SET status='rejected', reviewed_at=NOW() WHERE id=?")->execute([$reqId]);
+        setFlash('success', 'Change request rejected.');
+        header('Location: ' . SITE_URL . '/invoices.php?tab=' . $tab); exit;
+    }
+}
+
 pageHeader('Invoices');
 ?>
+
+<?php if (isAdmin()):
+    $pendingInvReqs = $db->query("SELECT * FROM invoice_change_requests WHERE status='pending' ORDER BY created_at DESC")->fetchAll();
+    if (!empty($pendingInvReqs)): ?>
+<div style="background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.3);border-radius:10px;margin-bottom:20px;overflow:hidden">
+  <div style="padding:12px 18px;background:rgba(245,166,35,.12);display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(245,166,35,.2)">
+    <span style="font-size:16px">⏳</span>
+    <span style="font-weight:700;color:var(--yellow)">PENDING CHANGE REQUESTS</span>
+    <span style="background:var(--red);color:#fff;font-size:11px;font-weight:700;border-radius:20px;padding:2px 8px"><?= count($pendingInvReqs) ?></span>
+  </div>
+  <div class="table-wrap mob-card-table">
+    <table>
+      <thead><tr><th>Requested By</th><th>Action</th><th>Details</th><th>Time</th><th>Decision</th></tr></thead>
+      <tbody>
+        <?php foreach ($pendingInvReqs as $r):
+          $p = json_decode($r['payload'], true);
+          $typeLabel = ['save'=>($r['invoice_id']?'✏️ Edit':'➕ New'),'delete'=>'🗑️ Delete','status'=>'🔄 Status Change'][$r['change_type']] ?? $r['change_type'];
+        ?>
+        <tr>
+          <td data-label="By"><strong><?= h($r['requested_by']) ?></strong></td>
+          <td data-label="Action"><span class="badge badge-<?= $r['change_type']==='delete'?'red':($r['change_type']==='status'?'yellow':'blue') ?>"><?= $typeLabel ?></span></td>
+          <td data-label="Details" style="font-size:12px;color:var(--text2)">
+            <?php if ($r['change_type'] === 'save'): ?>
+              <?= h(ucfirst($p['invoice_type'] ?? 'invoice')) ?><?php if ($r['invoice_id']): ?> #<?= $r['invoice_id'] ?><?php endif; ?><br>
+              Total: <strong style="color:var(--text)"><?= $sym ?> <?= number_format($p['total'] ?? 0, 2) ?></strong>
+            <?php elseif ($r['change_type'] === 'status'): ?>
+              Set invoice #<?= $r['invoice_id'] ?> to status: <strong style="color:var(--text)"><?= h(ucfirst($p['status'] ?? '')) ?></strong>
+            <?php else: ?>
+              Delete invoice ID #<?= $r['invoice_id'] ?>
+            <?php endif; ?>
+          </td>
+          <td data-label="Time" style="font-size:12px;color:var(--text2)"><?= date('d M Y H:i', strtotime($r['created_at'])) ?></td>
+          <td data-label=""><div class="mob-actions">
+            <a href="?req_action=approve_req&req_id=<?= $r['id'] ?>&tab=<?= $tab ?>" class="btn btn-success btn-sm" onclick="return confirm('Approve this change?')">✅ Approve</a>
+            <a href="?req_action=reject_req&req_id=<?= $r['id'] ?>&tab=<?= $tab ?>" class="btn btn-danger btn-sm" onclick="return confirm('Reject this request?')">❌ Reject</a>
+          </div></td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+<?php endif; endif; ?>
+
+<?php if (!isAdmin()):
+    $myInvReqs = $db->prepare("SELECT * FROM invoice_change_requests WHERE requested_by=? ORDER BY created_at DESC LIMIT 10");
+    $myInvReqs->execute([$_SESSION['full_name']]);
+    $myInvReqs = $myInvReqs->fetchAll();
+    if (!empty($myInvReqs)):
+        $myInvStatusStyle = ['pending'=>['yellow','⏳ Pending'],'approved'=>['green','✅ Approved'],'rejected'=>['red','❌ Rejected']];
+    ?>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-title">📝 My Recent Requests</div>
+  <div class="table-wrap mob-card-table">
+    <table>
+      <thead><tr><th>Action</th><th>Details</th><th>Submitted</th><th>Status</th></tr></thead>
+      <tbody>
+        <?php foreach ($myInvReqs as $r):
+          $p = json_decode($r['payload'], true);
+          $typeLabel = ['save'=>($r['invoice_id']?'✏️ Edit':'➕ New'),'delete'=>'🗑️ Delete','status'=>'🔄 Status Change'][$r['change_type']] ?? $r['change_type'];
+          [$badgeColor, $statusLabel] = $myInvStatusStyle[$r['status']] ?? ['blue', $r['status']];
+        ?>
+        <tr>
+          <td data-label="Action"><?= $typeLabel ?></td>
+          <td data-label="Details" style="font-size:12px;color:var(--text2)">
+            <?php if ($r['change_type'] === 'save'): ?>
+              <?= h(ucfirst($p['invoice_type'] ?? 'invoice')) ?> — <?= $sym ?> <?= number_format($p['total'] ?? 0, 2) ?>
+            <?php elseif ($r['change_type'] === 'status'): ?>
+              Invoice #<?= $r['invoice_id'] ?> → <?= h(ucfirst($p['status'] ?? '')) ?>
+            <?php else: ?>
+              Delete invoice #<?= $r['invoice_id'] ?>
+            <?php endif; ?>
+          </td>
+          <td data-label="Submitted" style="font-size:12px;color:var(--text2)"><?= date('d M Y H:i', strtotime($r['created_at'])) ?></td>
+          <td data-label="Status"><span class="badge badge-<?= $badgeColor ?>"><?= $statusLabel ?></span></td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+<?php endif; endif; ?>
 
 <!-- Tabs -->
 <div style="display:flex;gap:6px;margin-bottom:20px;border-bottom:1px solid var(--border)">

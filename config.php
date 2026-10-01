@@ -95,6 +95,19 @@ function requireAdminOrReadOnly($safeActions = []) {
     }
 }
 
+// Admins get full access and apply changes directly. Accounts Managers pass through too,
+// but the page itself must queue every mutation for admin approval instead of applying it
+// (mirrors the existing Expenses change-request pattern) — use this instead of
+// requireAdminOrReadOnly() on a page that's been upgraded to support that queue.
+function requireAdminOrQueued() {
+    requireLogin();
+    if (isAdmin()) return;
+    if (!isAccountsManager()) {
+        header('Location: ' . SITE_URL . '/dashboard.php?denied=1');
+        exit;
+    }
+}
+
 function currentUserId() {
     return $_SESSION['user_id'] ?? null;
 }

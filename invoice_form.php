@@ -1,7 +1,7 @@
 <?php
 require_once 'config.php';
 require_once 'includes/layout.php';
-requireAdminOrReadOnly();
+requireAdminOrQueued();
 $db = getDB();
 
 $id     = (int)($_GET['id'] ?? 0);
@@ -34,6 +34,12 @@ function nextInvNo($db, $type) {
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 if ($action === 'delete' && $id) {
+    if (!isAdmin()) {
+        $db->prepare("INSERT INTO invoice_change_requests (invoice_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
+           ->execute([$id, 'delete', json_encode(['invoice_id'=>$id]), $_SESSION['full_name']]);
+        setFlash('success', '✅ Delete request submitted for Admin approval.');
+        header('Location:'.SITE_URL.'/invoices.php?tab='.$tab); exit;
+    }
     $db->prepare("DELETE FROM invoices WHERE id=?")->execute([$id]);
     setFlash('success','Invoice deleted.');
     header('Location:'.SITE_URL.'/invoices.php?tab='.$tab); exit;
@@ -41,6 +47,12 @@ if ($action === 'delete' && $id) {
 
 if ($action === 'status' && $id) {
     $s = $_GET['s'] ?? 'draft';
+    if (!isAdmin()) {
+        $db->prepare("INSERT INTO invoice_change_requests (invoice_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
+           ->execute([$id, 'status', json_encode(['status'=>$s]), $_SESSION['full_name']]);
+        setFlash('success', '✅ Status change submitted for Admin approval.');
+        header('Location:'.SITE_URL.'/invoice_form.php?id='.$id.'&tab='.$tab); exit;
+    }
     $pd = $s==='paid' ? date('Y-m-d') : null;
     $db->prepare("UPDATE invoices SET status=?,paid_date=? WHERE id=?")->execute([$s,$pd,$id]);
     header('Location:'.SITE_URL.'/invoice_form.php?id='.$id.'&tab='.$tab); exit;
@@ -50,7 +62,10 @@ if ($action === 'status' && $id) {
 if ($_SERVER['REQUEST_METHOD']==='POST' && in_array($action,['save','save_new'])) {
     $d = $_POST;
     $invType     = $d['invoice_type'] ?? $type;
-    $invNo       = $id ? trim($d['invoice_number']) : nextInvNo($db, $invType);
+    // A new invoice's number is only actually assigned once an admin applies it (either
+    // directly below, or when approving a queued request) — generating it any earlier
+    // risks a duplicate if another invoice is created in the meantime.
+    $invNo       = $id ? trim($d['invoice_number']) : null;
     $invCurrency = $d['inv_currency'] ?? 'LKR';
     $invRate     = $invCurrency==='LKR' ? 1.0 : (float)(getSetting('rate_'.strtolower($invCurrency).'_lkr','1') ?: 1);
 
@@ -109,6 +124,29 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && in_array($action,['save','save_new'])
 
     $advAmount = trim($d['advance_amount']??'') !== '' ? (float)$d['advance_amount'] : null;
     $advDate   = !empty($d['advance_date']) ? $d['advance_date'] : null;
+
+    // Accounts Manager — queue for admin approval instead of saving directly
+    if (!isAdmin()) {
+        $payload = json_encode([
+            'invoice_type' => $invType, 'invoice_number' => $invNo, 'client_id' => $cid,
+            'issue_date' => $d['issue_date'], 'due_date' => $d['due_date'] ?? null,
+            'billing_month' => $d['billing_month'] ?? null,
+            'subtotal' => $subtotal, 'discount_pct' => $discPct, 'discount_amt' => $discAmt,
+            'tax_pct' => $taxPct, 'tax_amt' => $taxAmt, 'total' => $total,
+            'inv_currency' => $invCurrency, 'inv_rate' => $invRate,
+            'status' => $d['status'] ?? 'draft',
+            'notes' => trim($d['notes']??''), 'terms' => trim($d['terms']??''),
+            'manual_client_data' => $manualJson,
+            'advance_amount' => $advAmount, 'advance_date' => $advDate,
+            'items' => $items,
+        ]);
+        $db->prepare("INSERT INTO invoice_change_requests (invoice_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
+           ->execute([$id ?: null, 'save', $payload, $_SESSION['full_name']]);
+        setFlash('success', '✅ Your request has been submitted and is awaiting Admin approval.');
+        header('Location:'.SITE_URL.'/invoices.php?tab='.$tab); exit;
+    }
+
+    if (!$id) { $invNo = nextInvNo($db, $invType); }
 
     if ($id) {
         $db->prepare("UPDATE invoices SET invoice_type=?,client_id=?,issue_date=?,due_date=?,billing_month=?,subtotal=?,discount_pct=?,discount_amt=?,tax_pct=?,tax_amt=?,total=?,inv_currency=?,inv_rate=?,status=?,notes=?,terms=?,manual_client_data=?,advance_amount=?,advance_date=? WHERE id=?")
