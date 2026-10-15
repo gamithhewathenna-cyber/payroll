@@ -676,8 +676,9 @@ $statusStyle = ['pending'=>['yellow','⏳ Pending Review'],'approved'=>['green',
 </div>
 
 <?php
-// Build report WHERE clause
-$rWhere  = "billing_month=? AND record_type != 'bank_transfer'";
+// Build report WHERE clause — this page is Ads Expenses only, so strictly record_type='expense'
+// (no Bank Transfer records of either flavor, which belong to the separate Expenses page).
+$rWhere  = "billing_month=? AND record_type = 'expense'";
 $rParams = [$filterMonth];
 if ($reportClient) { $rWhere .= " AND client_name=?"; $rParams[] = $reportClient; }
 
@@ -745,7 +746,7 @@ $rStats = $rStats->fetch();
 
   <!-- Detailed Campaign List -->
   <?php
-  $detailStmt = $db->prepare("SELECT * FROM expenses WHERE billing_month=? AND client_name=? ORDER BY expense_date ASC, expense_category ASC");
+  $detailStmt = $db->prepare("SELECT * FROM expenses WHERE billing_month=? AND client_name=? AND record_type='expense' ORDER BY expense_date ASC, expense_category ASC");
   $detailStmt->execute([$filterMonth, $reportClient]);
   $details = $detailStmt->fetchAll();
   $grandCost = 0; $grandBill = 0; $grandFee = 0; $grandMarkup = 0;
@@ -853,7 +854,7 @@ $rStats = $rStats->fetch();
 
   <!-- Client-Paid for this client -->
   <?php
-  $cpStmt = $db->prepare("SELECT * FROM expenses WHERE billing_month=? AND client_name=? AND billing_type='client_paid' ORDER BY expense_date ASC");
+  $cpStmt = $db->prepare("SELECT * FROM expenses WHERE billing_month=? AND client_name=? AND billing_type='client_paid' AND record_type='expense' ORDER BY expense_date ASC");
   $cpStmt->execute([$filterMonth, $reportClient]);
   $cpRows = $cpStmt->fetchAll();
   if (!empty($cpRows)):
@@ -951,7 +952,7 @@ $rStats = $rStats->fetch();
 
   <!-- Client-Paid Summary -->
   <?php
-  $clientPaidReport = $db->prepare("SELECT client_name, COUNT(*) as cnt, SUM(cost_amount * exchange_rate) as total_cost, expense_category FROM expenses WHERE billing_month=? AND billing_type='client_paid' GROUP BY client_name, expense_category ORDER BY client_name");
+  $clientPaidReport = $db->prepare("SELECT client_name, COUNT(*) as cnt, SUM(cost_amount * exchange_rate) as total_cost, expense_category FROM expenses WHERE billing_month=? AND billing_type='client_paid' AND record_type='expense' GROUP BY client_name, expense_category ORDER BY client_name");
   $clientPaidReport->execute([$filterMonth]);
   $clientPaidReport = $clientPaidReport->fetchAll();
   $totalClientPaid  = array_sum(array_column($clientPaidReport, 'total_cost'));
