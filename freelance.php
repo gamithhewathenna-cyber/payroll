@@ -518,18 +518,22 @@ pageHeader('Freelance Payroll');
       </div>
       <div class="form-group" style="margin-bottom:16px">
         <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
-        <input type="month" id="markPaidInvoiceMonth" onchange="filterInvoiceList('markPaidInvoiceMonth','markPaidInvoiceList')" style="margin-bottom:8px">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input type="text" id="markPaidInvoiceSearch" oninput="filterInvoiceList('markPaidInvoice')" placeholder="🔎 Search client name or invoice #..." style="flex:1">
+          <input type="month" id="markPaidInvoiceMonth" onchange="filterInvoiceList('markPaidInvoice')" style="width:150px">
+        </div>
         <div id="markPaidInvoiceList" style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
           <?php if (empty($clientInvoices)): ?>
             <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
           <?php else: foreach ($clientInvoices as $ci): ?>
-            <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+            <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" data-search="<?= h(mb_strtolower($ci['company_name'].' '.$ci['invoice_number'])) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
               <input type="checkbox" class="markPaidInvoiceCheckbox" value="<?= $ci['id'] ?>" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
               <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
             </label>
           <?php endforeach; endif; ?>
+          <div class="invoiceNoMatch" style="display:none;font-size:12px;color:var(--text2)">No matching invoices.</div>
         </div>
-        <span style="font-size:11px;color:var(--text2)">Filter by month, then link this payment to the client invoice(s)/project(s) it was incurred for, for Reports tracking.</span>
+        <span style="font-size:11px;color:var(--text2)">Search or filter by month, then link this payment to the client invoice(s)/project(s) it was incurred for, for Reports tracking.</span>
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn btn-success" style="width:auto;padding:8px 20px" onclick="confirmMarkPaid()">✓ Confirm Paid</button>
@@ -541,11 +545,21 @@ pageHeader('Freelance Payroll');
 
 <script>
 let markPaidId = null;
-function filterInvoiceList(monthInputId, listId) {
-    const month = document.getElementById(monthInputId).value;
-    document.querySelectorAll(`#${listId} .invoiceRow`).forEach(row => {
-        row.style.display = (!month || row.dataset.month === month) ? '' : 'none';
+function filterInvoiceList(prefix) {
+    const month  = document.getElementById(prefix + 'Month').value;
+    const searchEl = document.getElementById(prefix + 'Search');
+    const search = searchEl ? searchEl.value.trim().toLowerCase() : '';
+    const list = document.getElementById(prefix + 'List');
+    let visible = 0;
+    list.querySelectorAll('.invoiceRow').forEach(row => {
+        const monthOk  = !month || row.dataset.month === month;
+        const searchOk = !search || row.dataset.search.includes(search);
+        const show = monthOk && searchOk;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
     });
+    const noMatch = list.querySelector('.invoiceNoMatch');
+    if (noMatch) noMatch.style.display = (visible === 0) ? '' : 'none';
 }
 function openMarkPaid(id) {
     markPaidId = id;
@@ -553,7 +567,8 @@ function openMarkPaid(id) {
     document.getElementById('markPaidRef').value = '';
     document.querySelectorAll('.markPaidInvoiceCheckbox').forEach(cb => cb.checked = false);
     document.getElementById('markPaidInvoiceMonth').value = '<?= h($filterMonth) ?>';
-    filterInvoiceList('markPaidInvoiceMonth','markPaidInvoiceList');
+    document.getElementById('markPaidInvoiceSearch').value = '';
+    filterInvoiceList('markPaidInvoice');
     openModal('markPaidModal');
 }
 function confirmMarkPaid() {
@@ -845,16 +860,20 @@ function confirmReject() {
           <div class="form-group full">
             <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
             <?php $editLinkedIds = array_column($paymentInvoiceLinks[$editPayment['id']] ?? [], 'client_invoice_id'); ?>
-            <input type="month" id="editPaymentInvoiceMonth" value="<?= h($editPayment['month']) ?>" onchange="filterInvoiceList('editPaymentInvoiceMonth','editPaymentInvoiceList')" style="margin-bottom:8px">
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <input type="text" id="editPaymentInvoiceSearch" oninput="filterInvoiceList('editPaymentInvoice')" placeholder="🔎 Search client name or invoice #..." style="flex:1">
+              <input type="month" id="editPaymentInvoiceMonth" value="<?= h($editPayment['month']) ?>" onchange="filterInvoiceList('editPaymentInvoice')" style="width:150px">
+            </div>
             <div id="editPaymentInvoiceList" style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
               <?php if (empty($clientInvoices)): ?>
                 <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
               <?php else: foreach ($clientInvoices as $ci): ?>
-                <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+                <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" data-search="<?= h(mb_strtolower($ci['company_name'].' '.$ci['invoice_number'])) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
                   <input type="checkbox" name="client_invoice_ids[]" value="<?= $ci['id'] ?>" <?= in_array((int)$ci['id'], $editLinkedIds, true) ? 'checked' : '' ?> style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
                   <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
                 </label>
               <?php endforeach; endif; ?>
+              <div class="invoiceNoMatch" style="display:none;font-size:12px;color:var(--text2)">No matching invoices.</div>
             </div>
             <span style="font-size:11px;color:var(--text2)">Link this payment to the client invoice(s)/project(s) it was incurred for, for Reports tracking.</span>
           </div>
@@ -955,7 +974,7 @@ function calcBal() {
 document.addEventListener('DOMContentLoaded', () => {
     calcBal();
     if (document.getElementById('editPaymentInvoiceMonth')) {
-        filterInvoiceList('editPaymentInvoiceMonth', 'editPaymentInvoiceList');
+        filterInvoiceList('editPaymentInvoice');
     }
 });
 </script>
