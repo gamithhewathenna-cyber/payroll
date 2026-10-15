@@ -35,11 +35,13 @@ $allowReport->execute([$filterMonth]);
 $allowReport = $allowReport->fetchAll();
 
 // Invoice & Freelance Cost report — ties each client invoice to the freelance
-// payments billed under it, so project profitability (invoice vs freelance cost) is visible
+// payments billed under it, so project profitability (invoice vs freelance cost) is visible.
+// Grouped by the invoice's issue month, not by when the client actually paid — an invoice
+// issued in September that gets paid in October still belongs in the September report.
 $invoiceCostReport = $db->prepare("
     SELECT i.id, i.invoice_number, i.total, i.status, c.company_name
     FROM invoices i JOIN clients c ON c.id = i.client_id
-    WHERE i.invoice_type = 'invoice' AND i.billing_month = ?
+    WHERE i.invoice_type = 'invoice' AND DATE_FORMAT(i.issue_date, '%Y-%m') = ?
     ORDER BY i.issue_date ASC
 ");
 $invoiceCostReport->execute([$filterMonth]);
