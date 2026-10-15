@@ -6,7 +6,7 @@ $db = getDB();
 $filterMonth  = $_GET['month']  ?? date('Y-m');
 $reportClient = trim($_GET['rclient'] ?? '');
 
-if (!$reportClient) { header('Location: ' . SITE_URL . '/expenses.php?tab=report'); exit; }
+if (!$reportClient) { header('Location: ' . SITE_URL . '/ads_expenses.php?tab=report'); exit; }
 
 // Load settings
 $companyName = getSetting('company_name', 'Creative Elements');
@@ -110,7 +110,7 @@ tfoot td { padding: 10px; background: #111; color: #fff; font-weight: 700; font-
 <!-- Toolbar (screen only) -->
 <div class="toolbar no-print">
   <button onclick="window.print()">🖨 Print / Save PDF</button>
-  <a href="<?= SITE_URL ?>/expenses.php?tab=report&month=<?= $filterMonth ?>&rclient=<?= urlencode($reportClient) ?>">← Back to Reports</a>
+  <a href="<?= SITE_URL ?>/ads_expenses.php?tab=report&month=<?= $filterMonth ?>&rclient=<?= urlencode($reportClient) ?>">← Back to Reports</a>
 </div>
 
 <div class="page">
