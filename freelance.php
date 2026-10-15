@@ -26,8 +26,14 @@ if ($action === 'mark_paid' && $id) {
     $row = $stmt->fetch();
     $paidDate = !empty($_GET['payment_date']) ? $_GET['payment_date'] : (!empty($row['payment_date']) ? $row['payment_date'] : date('Y-m-d'));
     $bankRef  = trim($_GET['bank_ref'] ?? '') ?: null;
-    $clientInvoiceId = !empty($_GET['client_invoice_id']) ? (int)$_GET['client_invoice_id'] : null;
-    $db->prepare("UPDATE freelance_payments SET payment_status='paid', payment_date=?, bank_reference=?, client_invoice_id=? WHERE id=?")->execute([$paidDate, $bankRef, $clientInvoiceId, $id]);
+    $db->prepare("UPDATE freelance_payments SET payment_status='paid', payment_date=?, bank_reference=? WHERE id=?")->execute([$paidDate, $bankRef, $id]);
+
+    // A payment can be linked to several client invoices/projects at once
+    $invoiceIds = array_filter(array_map('intval', explode(',', $_GET['client_invoice_ids'] ?? '')));
+    $db->prepare("DELETE FROM freelance_payment_invoices WHERE freelance_payment_id=?")->execute([$id]);
+    foreach (array_unique($invoiceIds) as $invId) {
+        $db->prepare("INSERT INTO freelance_payment_invoices (freelance_payment_id, client_invoice_id) VALUES (?,?)")->execute([$id, $invId]);
+    }
 
     // Send payment confirmation email
     if ($row && $row['email']) {
@@ -244,16 +250,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $bankRef = trim($d['bank_reference']??'') ?: null;
-        $clientInvoiceId = !empty($d['client_invoice_id']) ? (int)$d['client_invoice_id'] : null;
         if ($invoiceFile) {
-            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=?,invoice_file=?,invoice_file_name=?,bank_reference=?,client_invoice_id=? WHERE id=?")
-               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$invoiceFile,$invoiceOrigName,$bankRef,$clientInvoiceId,$id]);
+            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=?,invoice_file=?,invoice_file_name=?,bank_reference=? WHERE id=?")
+               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$invoiceFile,$invoiceOrigName,$bankRef,$id]);
         } else {
-            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=?,bank_reference=?,client_invoice_id=? WHERE id=?")
-               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$bankRef,$clientInvoiceId,$id]);
+            $db->prepare("UPDATE freelance_payments SET freelancer_id=?,project_name=?,invoice_number=?,invoice_date=?,invoice_amount=?,advance_amount=?,balance_due=?,payment_amount=?,payment_method=?,payment_status=?,payment_date=?,month=?,notes=?,bank_reference=? WHERE id=?")
+               ->execute([$d['freelancer_id'],trim($d['project_name']),trim($d['invoice_number']),trim($d['invoice_date']),$invAmt,$advAmt,$balDue,$invAmt,$d['payment_method'],$d['payment_status'],$payDate,$d['month'],trim($d['notes']),$bankRef,$id]);
         }
         if ($d['payment_status'] === 'paid') {
             $db->prepare("UPDATE freelance_payments SET payment_date=CURDATE() WHERE id=? AND payment_date IS NULL")->execute([$id]);
+        }
+
+        // Sync linked client invoices/projects (a payment can cover several)
+        $invoiceIds = array_filter(array_map('intval', $d['client_invoice_ids'] ?? []));
+        $db->prepare("DELETE FROM freelance_payment_invoices WHERE freelance_payment_id=?")->execute([$id]);
+        foreach (array_unique($invoiceIds) as $invId) {
+            $db->prepare("INSERT INTO freelance_payment_invoices (freelance_payment_id, client_invoice_id) VALUES (?,?)")->execute([$id, $invId]);
         }
         $sym2 = getSetting('currency_symbol','Rs.');
         setFlash('success', 'Payment updated.' . ($balDue > 0 ? ' Balance due: '.$sym2.' '.number_format($balDue,2) : '') . ($invoiceFile ? ' Invoice uploaded.' : ''));
@@ -279,12 +291,9 @@ $clientInvoices = $db->query("
 $pendingApprovals = $db->query("SELECT COUNT(*) FROM vendor_submissions WHERE submission_status='pending'")->fetchColumn();
 
 $payments = $db->prepare("
-    SELECT fp.*, f.freelancer_name, f.email, f.bank_name, f.bank_account, f.bank_branch,
-           ci.invoice_number AS linked_invoice_number, cc.company_name AS linked_client_name
+    SELECT fp.*, f.freelancer_name, f.email, f.bank_name, f.bank_account, f.bank_branch
     FROM freelance_payments fp
     JOIN freelancers f ON f.id = fp.freelancer_id
-    LEFT JOIN invoices ci ON ci.id = fp.client_invoice_id
-    LEFT JOIN clients cc ON cc.id = ci.client_id
     WHERE fp.month = ?
     ORDER BY fp.created_at DESC
 ");
@@ -293,6 +302,16 @@ $payments = $payments->fetchAll();
 
 $totalPaid    = array_sum(array_column(array_filter($payments, fn($p) => $p['payment_status']==='paid'), 'payment_amount'));
 $totalPending = array_sum(array_column(array_filter($payments, fn($p) => $p['payment_status']==='pending'), 'payment_amount'));
+
+// Linked client invoices/projects per payment (a payment can cover several)
+$paymentInvoiceLinks = [];
+$linkRows = $db->query("
+    SELECT fpi.freelance_payment_id, fpi.client_invoice_id, i.invoice_number, c.company_name
+    FROM freelance_payment_invoices fpi
+    JOIN invoices i ON i.id = fpi.client_invoice_id
+    JOIN clients c ON c.id = i.client_id
+")->fetchAll();
+foreach ($linkRows as $lr) { $paymentInvoiceLinks[$lr['freelance_payment_id']][] = $lr; }
 
 // Edit rows
 $editPayment    = null;
@@ -403,9 +422,9 @@ pageHeader('Freelance Payroll');
               </td>
               <td data-label="Project">
                 <?= h($p['project_name']) ?>
-                <?php if (!empty($p['linked_invoice_number'])): ?>
-                  <br><a href="<?= SITE_URL ?>/invoice_form.php?id=<?= (int)$p['client_invoice_id'] ?>" style="font-size:11px;color:var(--accent)" title="Linked client invoice">🔗 <?= h($p['linked_invoice_number']) ?> — <?= h($p['linked_client_name']) ?></a>
-                <?php endif; ?>
+                <?php foreach (($paymentInvoiceLinks[$p['id']] ?? []) as $link): ?>
+                  <br><a href="<?= SITE_URL ?>/invoice_form.php?id=<?= (int)$link['client_invoice_id'] ?>" style="font-size:11px;color:var(--accent)" title="Linked client invoice">🔗 <?= h($link['invoice_number']) ?> — <?= h($link['company_name']) ?></a>
+                <?php endforeach; ?>
               </td>
               <td data-label="Invoice #">
                 <?php if ($p['invoice_number']): ?>
@@ -498,14 +517,18 @@ pageHeader('Freelance Payroll');
         <input type="text" id="markPaidRef" placeholder="e.g. TXN123456789">
       </div>
       <div class="form-group" style="margin-bottom:16px">
-        <label>Client Invoice / Project <span style="color:var(--text2);font-weight:400">(optional)</span></label>
-        <select id="markPaidInvoice">
-          <option value="">— Not linked to a client invoice —</option>
-          <?php foreach ($clientInvoices as $ci): ?>
-            <option value="<?= $ci['id'] ?>"><?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)</option>
-          <?php endforeach; ?>
-        </select>
-        <span style="font-size:11px;color:var(--text2)">Link this payment to the client invoice/project it was incurred for, for Reports tracking.</span>
+        <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
+        <div id="markPaidInvoiceList" style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
+          <?php if (empty($clientInvoices)): ?>
+            <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
+          <?php else: foreach ($clientInvoices as $ci): ?>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+              <input type="checkbox" class="markPaidInvoiceCheckbox" value="<?= $ci['id'] ?>" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
+              <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
+            </label>
+          <?php endforeach; endif; ?>
+        </div>
+        <span style="font-size:11px;color:var(--text2)">Link this payment to the client invoice(s)/project(s) it was incurred for, for Reports tracking.</span>
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn btn-success" style="width:auto;padding:8px 20px" onclick="confirmMarkPaid()">✓ Confirm Paid</button>
@@ -521,15 +544,15 @@ function openMarkPaid(id) {
     markPaidId = id;
     document.getElementById('markPaidDate').value = new Date().toISOString().slice(0,10);
     document.getElementById('markPaidRef').value = '';
-    document.getElementById('markPaidInvoice').value = '';
+    document.querySelectorAll('.markPaidInvoiceCheckbox').forEach(cb => cb.checked = false);
     openModal('markPaidModal');
 }
 function confirmMarkPaid() {
     const date = document.getElementById('markPaidDate').value;
     if (!date) { alert('Please select a payment date.'); return; }
     const ref = encodeURIComponent(document.getElementById('markPaidRef').value || '');
-    const invoiceId = encodeURIComponent(document.getElementById('markPaidInvoice').value || '');
-    window.location = `?action=mark_paid&id=${markPaidId}&month=<?= h($filterMonth) ?>&payment_date=${date}&bank_ref=${ref}&client_invoice_id=${invoiceId}`;
+    const invoiceIds = Array.from(document.querySelectorAll('.markPaidInvoiceCheckbox:checked')).map(cb => cb.value).join(',');
+    window.location = `?action=mark_paid&id=${markPaidId}&month=<?= h($filterMonth) ?>&payment_date=${date}&bank_ref=${ref}&client_invoice_ids=${encodeURIComponent(invoiceIds)}`;
 }
 </script>
 
@@ -811,14 +834,19 @@ function confirmReject() {
           </div>
           <div class="form-group"><label>Bank Reference Code</label><input type="text" name="bank_reference" value="<?= h($editPayment['bank_reference'] ?? '') ?>" placeholder="e.g. TXN123456789"></div>
           <div class="form-group full">
-            <label>Client Invoice / Project <span style="color:var(--text2);font-weight:400">(optional)</span></label>
-            <select name="client_invoice_id">
-              <option value="">— Not linked to a client invoice —</option>
-              <?php foreach ($clientInvoices as $ci): ?>
-                <option value="<?= $ci['id'] ?>" <?= (int)($editPayment['client_invoice_id'] ?? 0) === (int)$ci['id'] ? 'selected' : '' ?>><?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)</option>
-              <?php endforeach; ?>
-            </select>
-            <span style="font-size:11px;color:var(--text2)">Link this payment to the client invoice/project it was incurred for, for Reports tracking.</span>
+            <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
+            <?php $editLinkedIds = array_column($paymentInvoiceLinks[$editPayment['id']] ?? [], 'client_invoice_id'); ?>
+            <div style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
+              <?php if (empty($clientInvoices)): ?>
+                <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
+              <?php else: foreach ($clientInvoices as $ci): ?>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+                  <input type="checkbox" name="client_invoice_ids[]" value="<?= $ci['id'] ?>" <?= in_array((int)$ci['id'], $editLinkedIds, true) ? 'checked' : '' ?> style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
+                  <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
+                </label>
+              <?php endforeach; endif; ?>
+            </div>
+            <span style="font-size:11px;color:var(--text2)">Link this payment to the client invoice(s)/project(s) it was incurred for, for Reports tracking.</span>
           </div>
           <div class="form-group full">
             <label>📎 Replace Invoice</label>
