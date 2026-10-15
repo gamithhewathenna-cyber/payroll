@@ -6,50 +6,34 @@ $db = getDB();
 $isAdminUser = isAdmin();
 
 // ── Actions ────────────────────────────────────────────────
+// This page only ever holds Bank Transfer records now — managed by Admins only.
+// "Not Bank Transfer" normal expenses, and their staff approval queue, live on the
+// separate Ads Expenses page instead.
 $action = $_REQUEST['action'] ?? '';
 $id     = (int)($_REQUEST['id'] ?? 0);
-// Every mutation below redirects back to whichever tab (Expenses vs Ads Expenses) the
-// request came from — otherwise an Ads Expense edited/added/paid from that tab would
-// redirect to the default Expenses tab and look like it vanished (it's filtered out there).
-$backTab = $_REQUEST['tab'] ?? 'expenses';
+
+if (($action !== '' || $_SERVER['REQUEST_METHOD'] === 'POST') && !isAdmin()) {
+    setFlash('error', 'Only Admins can manage Bank Transfer records.');
+    header('Location: ' . SITE_URL . '/expenses.php?month=' . ($_REQUEST['month'] ?? date('Y-m'))); exit;
+}
 
 if ($action === 'delete' && $id) {
-    if (!isAdmin()) {
-        $db->prepare("INSERT INTO expense_change_requests (expense_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
-           ->execute([$id, 'delete', json_encode(['expense_id'=>$id]), $_SESSION['full_name']]);
-        setFlash('success', '✅ Delete request submitted for Admin approval.');
-        header('Location: ' . SITE_URL . '/expenses.php?tab=' . $backTab . '&month=' . ($_REQUEST['month'] ?? date('Y-m'))); exit;
-    }
     $db->prepare("DELETE FROM expenses WHERE id=?")->execute([$id]);
     setFlash('success', 'Expense deleted.');
-    header('Location: ' . SITE_URL . '/expenses.php?tab=' . $backTab . '&month=' . ($_REQUEST['month'] ?? date('Y-m'))); exit;
+    header('Location: ' . SITE_URL . '/expenses.php?month=' . ($_REQUEST['month'] ?? date('Y-m'))); exit;
 }
 
-if ($action === 'approve' && $id) {
-    $db->prepare("UPDATE expenses SET approval_status='approved', approved_by=?, approved_at=NOW() WHERE id=?")->execute([$_SESSION['full_name'], $id]);
-    setFlash('success', 'Expense approved.');
-    header('Location: ' . SITE_URL . '/expenses.php?month=' . ($_GET['month'] ?? date('Y-m')) . '&tab=' . $backTab); exit;
-}
-if ($action === 'reject' && $id) {
-    $db->prepare("UPDATE expenses SET approval_status='rejected', approved_by=? WHERE id=?")->execute([$_SESSION['full_name'], $id]);
-    setFlash('success', 'Expense rejected.');
-    header('Location: ' . SITE_URL . '/expenses.php?month=' . ($_GET['month'] ?? date('Y-m')) . '&tab=' . $backTab); exit;
-}
-if ($action === 'reset_approval' && $id) {
-    $db->prepare("UPDATE expenses SET approval_status='pending_approval', approved_by=NULL, approved_at=NULL WHERE id=?")->execute([$id]);
-    header('Location: ' . SITE_URL . '/expenses.php?month=' . ($_GET['month'] ?? date('Y-m')) . '&tab=' . $backTab); exit;
-}
 if ($action === 'status' && $id) {
     $newStatus = $_GET['s'] ?? 'pending';
     $db->prepare("UPDATE expenses SET status=? WHERE id=?")->execute([$newStatus, $id]);
     setFlash('success', 'Status updated.');
-    header('Location: ' . SITE_URL . '/expenses.php?' . http_build_query(['month'=>$_GET['month']??'','client'=>$_GET['client']??'','cat'=>$_GET['cat']??'','status'=>$_GET['status']??'','tab'=>$backTab])); exit;
+    header('Location: ' . SITE_URL . '/expenses.php?' . http_build_query(['month'=>$_GET['month']??'','client'=>$_GET['client']??'','cat'=>$_GET['cat']??'','status'=>$_GET['status']??''])); exit;
 }
 if ($action === 'mark_paid' && $id) {
     $paidDate = !empty($_REQUEST['payment_date']) ? $_REQUEST['payment_date'] : date('Y-m-d');
     $method   = ($_REQUEST['payment_method'] ?? '') === 'not_bank_transfer' ? 'not_bank_transfer' : 'bank_transfer';
     $bankRef  = trim($_REQUEST['bank_reference'] ?? '') ?: null;
-    $backTo   = SITE_URL . '/expenses.php?month=' . ($_REQUEST['month'] ?? date('Y-m')) . '&tab=' . $backTab;
+    $backTo   = SITE_URL . '/expenses.php?month=' . ($_REQUEST['month'] ?? date('Y-m'));
     if ($method === 'bank_transfer' && !$bankRef) {
         setFlash('error', 'Bank Reference Number is required for bank transfer payments.');
         header('Location: ' . $backTo); exit;
@@ -92,50 +76,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rateKey     = 'rate_' . strtolower($currency) . '_lkr';
     $exRate      = $currency === 'LKR' ? 1.0 : (float)(getSetting($rateKey, '1'));
 
-    // Bank-transfer record types (Add Expense only, admin only). Two flavors:
+    // This page only holds Bank Transfer records. Two flavors:
     //  - "bank_transfer"         a pure bank-transaction log entry — excluded from
     //                            billing/revenue/profit, tracked only in the Payment Report.
     //  - "bank_transfer_expense" a normal billable expense (still counts toward Revenue/
     //                            Profit/expense totals) that's also recorded as paid via
     //                            bank transfer at creation, so it shows in the Payment Report too.
-    // Neither is reachable for staff or for the edit action.
-    $recordTypeInput      = ($action === 'add' && isAdmin()) ? ($d['record_type'] ?? 'expense') : 'expense';
-    $recordType            = $recordTypeInput === 'bank_transfer' ? 'bank_transfer' : 'expense';
-    $isBankTransferExpense = $recordTypeInput === 'bank_transfer_expense';
-    $isAnyBankTransfer     = $recordType === 'bank_transfer' || $isBankTransferExpense;
+    // record_type is only ever set on add — edit never changes it.
+    $recordTypeInput = $action === 'add' ? ($d['record_type'] ?? 'bank_transfer_expense') : 'bank_transfer_expense';
+    $recordType      = $recordTypeInput === 'bank_transfer' ? 'bank_transfer' : 'bank_transfer_expense';
 
-    $bankRef = null; $paymentReceiptPath = null; $paymentDate = null; $paymentMethod = null;
-    if ($isAnyBankTransfer) {
-        if ($recordType === 'bank_transfer') {
-            $billingType = 'internal';
-            $clientName  = null;
-            $markup      = 0;
-            $addFee      = 0;
-        }
-        $bankRef = trim($d['bank_reference'] ?? '');
-        if ($bankRef === '') {
-            setFlash('error', 'Bank Reference Number is required for a Bank Transfer record.');
-            header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m'))); exit;
-        }
-        $paymentDate   = $d['expense_date'];
-        $paymentMethod = 'bank_transfer';
+    if ($action === 'add' && $recordType === 'bank_transfer') {
+        $billingType = 'internal';
+        $clientName  = null;
+        $markup      = 0;
+        $addFee      = 0;
+    }
+    $bankRef = trim($d['bank_reference'] ?? '');
+    if ($action === 'add' && $bankRef === '') {
+        setFlash('error', 'Bank Reference Number is required for a Bank Transfer record.');
+        header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m'))); exit;
+    }
+    $paymentDate   = $d['expense_date'];
+    $paymentMethod = 'bank_transfer';
 
-        if (!empty($_FILES['payment_receipt']['name']) && $_FILES['payment_receipt']['error'] === UPLOAD_ERR_OK) {
-            $ext = strtolower(pathinfo($_FILES['payment_receipt']['name'], PATHINFO_EXTENSION));
-            if (in_array($ext, ['pdf', 'jpg', 'jpeg', 'png'], true)) {
-                $dir = 'uploads/payment_receipts/';
-                if (!is_dir(__DIR__.'/'.$dir)) mkdir(__DIR__.'/'.$dir, 0755, true);
-                $fname = 'payrcpt_' . time() . '_' . mt_rand(1000, 9999) . '.' . $ext;
-                if (move_uploaded_file($_FILES['payment_receipt']['tmp_name'], __DIR__.'/'.$dir.$fname)) {
-                    $paymentReceiptPath = $dir . $fname;
-                }
+    $paymentReceiptPath = null;
+    if (!empty($_FILES['payment_receipt']['name']) && $_FILES['payment_receipt']['error'] === UPLOAD_ERR_OK) {
+        $ext = strtolower(pathinfo($_FILES['payment_receipt']['name'], PATHINFO_EXTENSION));
+        if (in_array($ext, ['pdf', 'jpg', 'jpeg', 'png'], true)) {
+            $dir = 'uploads/payment_receipts/';
+            if (!is_dir(__DIR__.'/'.$dir)) mkdir(__DIR__.'/'.$dir, 0755, true);
+            $fname = 'payrcpt_' . time() . '_' . mt_rand(1000, 9999) . '.' . $ext;
+            if (move_uploaded_file($_FILES['payment_receipt']['tmp_name'], __DIR__.'/'.$dir.$fname)) {
+                $paymentReceiptPath = $dir . $fname;
             }
         }
     }
 
     $costLKR = $cost * $exRate;
     $total   = round($costLKR + ($costLKR * $markup / 100) + $addFee, 2);
-    $status  = $isAnyBankTransfer ? 'paid' : ($d['status'] ?? 'pending');
+    $status  = $action === 'add' ? 'paid' : ($d['status'] ?? 'pending');
 
     // Receipt upload (PDF only) — keep the existing one if editing and no new file is given
     $receiptPath = null;
@@ -156,34 +136,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $receiptPath = $er->fetchColumn() ?: null;
     }
 
-    // Staff users — queue changes for admin approval
-    if (!isAdmin()) {
-        $payload = json_encode([
-            'expense_date' => $d['expense_date'], 'billing_month' => $d['billing_month'],
-            'client_name' => $clientName, 'billing_type' => $billingType,
-            'expense_category' => $d['expense_category'], 'project_name' => trim($d['project_name']??''),
-            'description' => trim($d['description']??''), 'cost_amount' => $cost,
-            'currency' => $currency, 'exchange_rate' => $exRate,
-            'markup_percentage' => $markup, 'additional_fee' => $addFee,
-            'total_billable' => $total, 'status' => $d['status']??'pending',
-            'notes' => trim($d['notes']??''), 'receipt_path' => $receiptPath,
-        ]);
-        $db->prepare("INSERT INTO expense_change_requests (expense_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
-           ->execute([$action === 'edit' ? $id : null, $action, $payload, $_SESSION['full_name']]);
-        setFlash('success', '✅ Your request has been submitted and is awaiting Admin approval.');
-        header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m')) . '&tab=' . ($d['tab'] ?? 'expenses')); exit;
-    }
-
     if ($action === 'add') {
         $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,record_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at,payment_date,payment_method,bank_reference,payment_receipt_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW(),?,?,?,?)")
            ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$recordType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$status,trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$_SESSION['full_name'],$paymentDate,$paymentMethod,$bankRef,$paymentReceiptPath]);
-        setFlash('success', $recordType === 'bank_transfer' ? '🏦 Bank transfer recorded.' : ($isBankTransferExpense ? '🏦 Expense recorded as paid via bank transfer.' : 'Expense added.'));
-        // Redirect to wherever this expense actually lands — Ads Expenses for a plain
-        // "Not Bank Transfer" record, Expenses for either Bank Transfer flavor — regardless
-        // of which tab the Add button happened to be clicked from.
-        $redirectTab = $recordType === 'expense' ? 'ads_expenses' : 'expenses';
+        setFlash('success', $recordType === 'bank_transfer' ? '🏦 Bank transfer recorded.' : '🏦 Expense recorded as paid via bank transfer.');
     } elseif ($action === 'edit') {
-        $stmt = $db->prepare("SELECT exchange_rate, currency, record_type FROM expenses WHERE id=?");
+        $stmt = $db->prepare("SELECT exchange_rate, currency FROM expenses WHERE id=?");
         $stmt->execute([$id]);
         $orig = $stmt->fetch();
         if ($orig && $orig['currency'] === $currency) {
@@ -191,14 +149,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $costLKR = $cost * $exRate;
             $total   = round($costLKR + ($costLKR * $markup / 100) + $addFee, 2);
         }
-        $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
+        $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approved_by=?,approved_at=NOW() WHERE id=?")
            ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$d['status']??'pending',trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$id]);
         setFlash('success', 'Expense updated.');
-        // Editing never changes record_type — redirect back to whichever tab this expense
-        // actually belongs to (not necessarily the tab the Edit link was clicked from).
-        $redirectTab = ($orig && $orig['record_type'] === 'expense') ? 'ads_expenses' : 'expenses';
     }
-    header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m')) . '&tab=' . $redirectTab); exit;
+    header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m'))); exit;
 }
 
 // ── Filters ────────────────────────────────────────────────
@@ -207,23 +162,16 @@ $filterClient   = trim($_GET['client'] ?? '');
 $filterCat      = trim($_GET['cat'] ?? '');
 $filterStatus   = trim($_GET['status'] ?? '');
 $filterProject  = trim($_GET['project'] ?? '');
-$filterApproval = trim($_GET['approval'] ?? '');
 $tab            = $_GET['tab'] ?? 'expenses';
 
-// "Ads Expenses" is a fully separate section from the main Expenses tab: normal
-// (Not Bank Transfer) expenses live there instead, while Expenses now only holds the
-// two Bank Transfer record types. Drives the main list/stats query below, and the
-// Payment Report / Ads Payment Report tabs further down.
-$isAdsTab = in_array($tab, ['ads_expenses', 'ads_payment_report'], true);
-
-// Build query — bank-transfer tracking records are listed here too, just excluded from totals/stats below
-$where  = ["billing_month = ?", $isAdsTab ? "record_type = 'expense'" : "record_type != 'expense'"];
+// This page only ever holds Bank Transfer records — "Not Bank Transfer" normal
+// expenses live on the separate Ads Expenses page instead.
+$where  = ["billing_month = ?", "record_type != 'expense'"];
 $params = [$filterMonth];
-if ($filterClient)   { $where[] = "client_name LIKE ?";   $params[] = "%$filterClient%"; }
-if ($filterCat)      { $where[] = "expense_category = ?"; $params[] = $filterCat; }
-if ($filterStatus)   { $where[] = "status = ?";           $params[] = $filterStatus; }
-if ($filterProject)  { $where[] = "project_name LIKE ?";  $params[] = "%$filterProject%"; }
-if ($filterApproval) { $where[] = "approval_status = ?";  $params[] = $filterApproval; }
+if ($filterClient)  { $where[] = "client_name LIKE ?";   $params[] = "%$filterClient%"; }
+if ($filterCat)     { $where[] = "expense_category = ?"; $params[] = $filterCat; }
+if ($filterStatus)  { $where[] = "status = ?";           $params[] = $filterStatus; }
+if ($filterProject) { $where[] = "project_name LIKE ?";  $params[] = "%$filterProject%"; }
 $whereSQL = implode(' AND ', $where);
 
 $expenses = $db->prepare("SELECT * FROM expenses WHERE $whereSQL ORDER BY expense_date DESC");
@@ -238,9 +186,8 @@ $stats = $db->prepare("SELECT
     COALESCE(SUM(CASE WHEN billing_type = 'client_paid' THEN cost_amount * exchange_rate ELSE 0 END),0) as client_paid_cost,
     COALESCE(SUM(CASE WHEN status IN ('pending','invoiced') AND billing_type != 'client_paid' THEN total_billable ELSE 0 END),0) as outstanding,
     COALESCE(SUM(CASE WHEN status = 'paid' AND billing_type != 'client_paid' THEN total_billable ELSE 0 END),0) as paid_amt,
-    COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable - (cost_amount * exchange_rate) ELSE 0 END),0) as markup_earned,
-    COALESCE(SUM(CASE WHEN approval_status = 'pending_approval' THEN 1 ELSE 0 END),0) as pending_approvals
-FROM expenses WHERE billing_month = ? AND " . ($isAdsTab ? "record_type = 'expense'" : "record_type != 'expense'"));
+    COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable - (cost_amount * exchange_rate) ELSE 0 END),0) as markup_earned
+FROM expenses WHERE billing_month = ? AND record_type != 'expense'");
 $stats->execute([$filterMonth]);
 $stats = $stats->fetch();
 
@@ -269,92 +216,12 @@ $ratesJson = json_encode($rates);
 $ratesUpdated = getSetting('rates_updated', 'Not set');
 $statusColors = ['pending'=>'yellow','invoiced'=>'blue','paid'=>'green','cancelled'=>'red'];
 
-// ── Admin: handle change request approvals (must be before pageHeader) ──
-if (isAdmin()) {
-    $reqAction = $_GET['req_action'] ?? '';
-    $reqId     = (int)($_GET['req_id'] ?? 0);
-
-    if ($reqAction === 'approve_req' && $reqId) {
-        $req = $db->prepare("SELECT * FROM expense_change_requests WHERE id=?");
-        $req->execute([$reqId]);
-        $req = $req->fetch();
-        if ($req) {
-            $p = json_decode($req['payload'], true);
-            if ($req['change_type'] === 'add') {
-                $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
-                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$req['requested_by'],$_SESSION['full_name']]);
-            } elseif ($req['change_type'] === 'edit') {
-                $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
-                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$_SESSION['full_name'],$req['expense_id']]);
-            } elseif ($req['change_type'] === 'delete') {
-                $db->prepare("DELETE FROM expenses WHERE id=?")->execute([$req['expense_id']]);
-            }
-            $db->prepare("UPDATE expense_change_requests SET status='approved', reviewed_at=NOW() WHERE id=?")->execute([$reqId]);
-            setFlash('success', '✅ Change approved and applied successfully.');
-        }
-        // Staff can only ever submit plain (Not Bank Transfer) expenses, which now live
-        // in Ads Expenses — redirect there so the approved entry is actually visible.
-        header('Location: ' . SITE_URL . '/expenses.php?tab=ads_expenses&month=' . $filterMonth); exit;
-    }
-
-    if ($reqAction === 'reject_req' && $reqId) {
-        $db->prepare("UPDATE expense_change_requests SET status='rejected', reviewed_at=NOW() WHERE id=?")->execute([$reqId]);
-        setFlash('success', 'Change request rejected.');
-        header('Location: ' . SITE_URL . '/expenses.php?tab=ads_expenses&month=' . $filterMonth); exit;
-    }
-}
-
 pageHeader('Expenses & Client Rebilling');
-
-// ── Admin: show pending requests banner ──
-if (isAdmin()) {
-    $pendingReqs = $db->query("SELECT * FROM expense_change_requests WHERE status='pending' ORDER BY created_at DESC")->fetchAll();
-    if (!empty($pendingReqs)):
 ?>
-<div style="background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.3);border-radius:10px;margin-bottom:20px;overflow:hidden">
-  <div style="padding:12px 18px;background:rgba(245,166,35,.12);display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(245,166,35,.2)">
-    <span style="font-size:16px">⏳</span>
-    <span style="font-weight:700;color:var(--yellow)">PENDING CHANGE REQUESTS</span>
-    <span style="background:var(--red);color:#fff;font-size:11px;font-weight:700;border-radius:20px;padding:2px 8px"><?= count($pendingReqs) ?></span>
-  </div>
-  <div class="table-wrap mob-card-table">
-    <table>
-      <thead><tr><th>Requested By</th><th>Action</th><th>Details</th><th>Time</th><th>Decision</th></tr></thead>
-      <tbody>
-        <?php foreach ($pendingReqs as $r):
-          $p = json_decode($r['payload'], true);
-          $typeLabel = ['add'=>'➕ Add','edit'=>'✏️ Edit','delete'=>'🗑️ Delete'][$r['change_type']] ?? $r['change_type'];
-        ?>
-        <tr>
-          <td data-label="By"><strong><?= h($r['requested_by']) ?></strong></td>
-          <td data-label="Action"><span class="badge badge-<?= $r['change_type']==='delete'?'red':($r['change_type']==='edit'?'blue':'green') ?>"><?= $typeLabel ?></span></td>
-          <td data-label="Details" style="font-size:12px;color:var(--text2)">
-            <?php if ($r['change_type'] !== 'delete'): ?>
-              <?= h($p['expense_category']??'') ?> — <?= h($p['client_name']??'Internal') ?><br>
-              Amount: <strong style="color:var(--text)"><?= isset($p['total_billable']) ? formatMoney($p['total_billable']) : '—' ?></strong>
-              <?php if (!empty($p['receipt_path'])): ?>
-                <br><a href="<?= SITE_URL ?>/<?= h($p['receipt_path']) ?>" target="_blank" style="color:var(--accent)">📄 View Receipt</a>
-              <?php endif; ?>
-            <?php else: ?>
-              Delete expense ID #<?= $r['expense_id'] ?>
-            <?php endif; ?>
-          </td>
-          <td data-label="Time" style="font-size:12px;color:var(--text2)"><?= date('d M Y H:i', strtotime($r['created_at'])) ?></td>
-          <td data-label=""><div class="mob-actions">
-            <a href="?req_action=approve_req&req_id=<?= $r['id'] ?>&tab=expenses&month=<?= $filterMonth ?>" class="btn btn-success btn-sm" onclick="return confirm('Approve this change?')">✅ Approve</a>
-            <a href="?req_action=reject_req&req_id=<?= $r['id'] ?>&tab=expenses&month=<?= $filterMonth ?>" class="btn btn-danger btn-sm" onclick="return confirm('Reject this request?')">❌ Reject</a>
-          </div></td>
-        </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-  </div>
-</div>
-<?php endif; } ?>
 
 <!-- ── Stats ── -->
-<?php if ($tab === 'expenses' || $tab === 'ads_expenses'): ?>
-<div style="font-size:12px;color:var(--text2);margin-bottom:6px"><?= $isAdsTab ? '📢 Ads Expenses totals' : '💰 Expenses totals (Bank Transfer records)' ?></div>
+<?php if ($tab === 'expenses'): ?>
+<div style="font-size:12px;color:var(--text2);margin-bottom:6px">💰 Expenses totals (Bank Transfer records)</div>
 <?php endif; ?>
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr));margin-bottom:20px">
   <div class="stat-card"><div class="stat-label">Total Expenses</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['total_cost']) ?></div><div class="stat-sub"><?= date('M Y', strtotime($filterMonth.'-01')) ?></div></div>
@@ -368,43 +235,18 @@ if (isAdmin()) {
   <div class="stat-card red"><div class="stat-label">Outstanding</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['outstanding']) ?></div><div class="stat-sub">Pending + Invoiced</div></div>
   <div class="stat-card green"><div class="stat-label">Paid</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['paid_amt']) ?></div><div class="stat-sub">Collected</div></div>
   <div class="stat-card yellow"><div class="stat-label">Markup Earned</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['markup_earned']) ?></div><div class="stat-sub">Profit from rebilling</div></div>
-  <?php if ($stats['pending_approvals'] > 0): ?>
-  <div class="stat-card red" style="cursor:pointer" onclick="window.location='?tab=<?= h($tab==='expenses'||$tab==='ads_expenses'?$tab:'ads_expenses') ?>&month=<?= $filterMonth ?>&approval=pending_approval'">
-    <div class="stat-label">⚠️ Needs Approval</div>
-    <div class="stat-value"><?= $stats['pending_approvals'] ?></div>
-    <div class="stat-sub">Click to filter</div>
-  </div>
-  <?php endif; ?>
 </div>
 
 <!-- ── Tabs ── -->
-<?php
-$myPendingCount = 0;
-if (!isAdmin()) {
-    $mpc = $db->prepare("SELECT COUNT(*) FROM expense_change_requests WHERE requested_by=? AND status='pending'");
-    $mpc->execute([$_SESSION['full_name']]);
-    $myPendingCount = (int)$mpc->fetchColumn();
-}
-?>
 <div style="display:flex;gap:6px;margin-bottom:20px;border-bottom:1px solid var(--border)">
   <a href="?tab=expenses&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='expenses'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">💰 Expenses</a>
-  <a href="?tab=ads_expenses&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='ads_expenses'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">📢 Ads Expenses</a>
-  <?php if (!isAdmin()): ?>
-  <a href="?tab=my_requests&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;position:relative;<?= $tab==='my_requests'?'background:var(--yellow);color:#000':'background:var(--bg3);color:var(--text2)' ?>">
-    ⏳ My Requests
-    <?php if ($myPendingCount > 0): ?>
-      <span style="position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;font-size:10px;font-weight:700;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center"><?= $myPendingCount ?></span>
-    <?php endif; ?>
-  </a>
-  <?php endif; ?>
   <?php if (isAdmin()): ?>
   <a href="?tab=report&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='report'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">📊 Report</a>
   <a href="?tab=payment_report&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='payment_report'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">💵 Payment Report</a>
-  <a href="?tab=ads_payment_report&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='ads_payment_report'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">📢💵 Ads Payment Report</a>
   <?php endif; ?>
 </div>
 
-<?php if ($tab === 'expenses' || $tab === 'ads_expenses'): ?>
+<?php if ($tab === 'expenses'): ?>
 
 <!-- ── Filters ── -->
 <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
@@ -446,25 +288,18 @@ if (!isAdmin()) {
         <option value="cancelled" <?= $filterStatus==='cancelled'?'selected':'' ?>>Cancelled</option>
       </select>
     </div>
-    <div class="form-group" style="margin:0">
-      <label>Approval</label>
-      <select name="approval">
-        <option value="">All</option>
-        <option value="pending_approval" <?= $filterApproval==='pending_approval'?'selected':'' ?>>⏳ Pending</option>
-        <option value="approved"         <?= $filterApproval==='approved'        ?'selected':'' ?>>✅ Approved</option>
-        <option value="rejected"         <?= $filterApproval==='rejected'        ?'selected':'' ?>>❌ Rejected</option>
-      </select>
-    </div>
     <div style="display:flex;gap:8px;align-items:flex-end">
       <button type="submit" class="btn btn-primary btn-sm" style="flex:1">Filter</button>
-      <a href="?tab=<?= h($tab) ?>&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm">Clear</a>
+      <a href="?tab=expenses&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm">Clear</a>
     </div>
   </form>
 </div>
 
 <div class="section-header">
   <div style="font-size:13px;color:var(--text2)"><?= count($expenses) ?> records</div>
-  <button class="btn btn-primary" onclick="openAddModal('<?= $isAdsTab ? 'ads' : 'bank' ?>')">+ Add <?= $isAdsTab ? 'Ads Expense' : 'Expense' ?></button>
+  <?php if (isAdmin()): ?>
+  <button class="btn btn-primary" onclick="openAddModal()">+ Add Expense</button>
+  <?php endif; ?>
 </div>
 
 <!-- ── Expenses Table ── -->
@@ -474,12 +309,12 @@ if (!isAdmin()) {
       <thead>
         <tr>
           <th>Date</th><th>Category</th><th>Client</th>
-          <th>Original Cost</th><th>LKR Amount</th><th>Markup</th><th>Total Billable</th><th>Approval</th><th>Status</th><th>Actions</th>
+          <th>Original Cost</th><th>LKR Amount</th><th>Markup</th><th>Total Billable</th><th>Status</th><th>Actions</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($expenses)): ?>
-          <tr><td colspan="10" style="text-align:center;color:var(--text2);padding:36px">No expenses for <?= date('F Y', strtotime($filterMonth.'-01')) ?>.</td></tr>
+          <tr><td colspan="9" style="text-align:center;color:var(--text2);padding:36px">No expenses for <?= date('F Y', strtotime($filterMonth.'-01')) ?>.</td></tr>
         <?php else: foreach ($expenses as $e): ?>
           <tr>
             <td data-label="Date" style="white-space:nowrap"><?= date('d M Y', strtotime($e['expense_date'])) ?></td>
@@ -517,20 +352,8 @@ if (!isAdmin()) {
             </td>
             <td data-label="Markup" style="color:var(--text2)"><?= $e['markup_percentage'] > 0 ? h($e['markup_percentage']).'%' : '—' ?></td>
             <td data-label="Billable"><strong style="color:var(--green)"><?= formatMoney($e['total_billable']) ?></strong></td>
-            <td data-label="Approval">
-              <?php $appr = $e['approval_status'] ?? 'pending_approval'; ?>
-              <?php if ($appr === 'approved'): ?>
-                <span class="badge badge-green">✅ Approved</span>
-                <?php if (!empty($e['approved_by'])): ?><br><span style="font-size:10px;color:var(--text2)"><?= h($e['approved_by']) ?></span><?php endif; ?>
-              <?php elseif ($appr === 'rejected'): ?>
-                <span class="badge badge-red">❌ Rejected</span>
-                <br><a href="?action=reset_approval&id=<?= $e['id'] ?>&month=<?= $filterMonth ?>&tab=<?= h($tab) ?>" style="font-size:10px;color:var(--accent)">Reset</a>
-              <?php else: ?>
-                <span class="badge badge-yellow">⏳ Pending</span>
-              <?php endif; ?>
-            </td>
             <td data-label="Status">
-              <select data-prev="<?= $e['status'] ?>" data-billing="<?= h($e['billing_type']) ?>" onchange="handleStatusChange(this, <?= $e['id'] ?>, '<?= $filterMonth ?>', '<?= h($tab) ?>')"
+              <select data-prev="<?= $e['status'] ?>" data-billing="<?= h($e['billing_type']) ?>" onchange="handleStatusChange(this, <?= $e['id'] ?>, '<?= $filterMonth ?>')"
                 style="background:transparent;border:none;font-size:12px;font-weight:600;cursor:pointer;padding:3px 6px;border-radius:12px;
                 color:<?= ['pending'=>'var(--yellow)','invoiced'=>'var(--accent)','paid'=>'var(--green)','cancelled'=>'var(--red)'][$e['status']] ?>">
                 <option value="pending"   <?= $e['status']==='pending'  ?'selected':'' ?>>Pending</option>
@@ -543,8 +366,10 @@ if (!isAdmin()) {
               <?php if (isAdmin() && !empty($e['receipt_path'])): ?>
                 <a href="<?= SITE_URL ?>/<?= h($e['receipt_path']) ?>" target="_blank" class="btn btn-ghost btn-sm" title="View receipt">📄 Receipt</a>
               <?php endif; ?>
-              <a href="?action=edit&id=<?= $e['id'] ?>&month=<?= $filterMonth ?>&tab=<?= h($tab) ?>" class="btn btn-ghost btn-sm">Edit</a>
-              <a href="?action=delete&id=<?= $e['id'] ?>&tab=<?= h($tab) ?>&month=<?= $filterMonth ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete this expense?')">Del</a>
+              <?php if (isAdmin()): ?>
+              <a href="?action=edit&id=<?= $e['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-ghost btn-sm">Edit</a>
+              <a href="?action=delete&id=<?= $e['id'] ?>&month=<?= $filterMonth ?>" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete this expense?')">Del</a>
+              <?php endif; ?>
             </div></td>
           </tr>
         <?php endforeach; endif; ?>
@@ -568,7 +393,6 @@ if (!isAdmin()) {
     <form method="POST" action="?action=mark_paid" enctype="multipart/form-data" id="markPaidForm" onsubmit="return validateMarkPaid()">
       <input type="hidden" name="id" id="markPaidIdInput">
       <input type="hidden" name="month" id="markPaidMonthInput">
-      <input type="hidden" name="tab" id="markPaidTabInput">
       <div class="modal-body">
         <div class="form-group" style="margin-bottom:14px">
           <label>Payment Date *</label>
@@ -606,21 +430,20 @@ if (!isAdmin()) {
 <script>
 let markPaidSelect = null;
 
-function handleStatusChange(sel, id, month, tab) {
+function handleStatusChange(sel, id, month) {
     // Client-Paid expenses are settled directly by the client — no bank ref/receipt to collect,
     // so skip the Mark as Paid popup entirely and just update the status like any other change.
     if (sel.value === 'paid' && sel.dataset.billing !== 'client_paid') {
-        openMarkPaid(id, month, sel, tab);
+        openMarkPaid(id, month, sel);
     } else {
-        updateStatus(id, sel.value, month, tab);
+        updateStatus(id, sel.value, month);
     }
 }
 
-function openMarkPaid(id, month, selectEl, tab) {
+function openMarkPaid(id, month, selectEl) {
     markPaidSelect = selectEl || null;
     document.getElementById('markPaidIdInput').value = id;
     document.getElementById('markPaidMonthInput').value = month;
-    document.getElementById('markPaidTabInput').value = tab || 'expenses';
     document.getElementById('markPaidDate').value = new Date().toISOString().slice(0,10);
     document.getElementById('markPaidRef').value = '';
     document.getElementById('markPaidReceipt').value = '';
@@ -660,79 +483,9 @@ document.getElementById('markPaidModal').addEventListener('click', (e) => {
 });
 </script>
 
-<?php elseif ($tab === 'my_requests' && !isAdmin()): ?>
+<?php elseif ($tab === 'payment_report' && isAdmin()): ?>
 
-<!-- ── MY REQUESTS TAB ── -->
-<?php
-$myRequests = $db->prepare("SELECT * FROM expense_change_requests WHERE requested_by=? ORDER BY created_at DESC");
-$myRequests->execute([$_SESSION['full_name']]);
-$myRequests = $myRequests->fetchAll();
-$typeLabels  = ['add'=>'➕ Add Expense','edit'=>'✏️ Edit Expense','delete'=>'🗑️ Delete Expense'];
-$statusStyle = ['pending'=>['yellow','⏳ Pending Review'],'approved'=>['green','✅ Approved'],'rejected'=>['red','❌ Rejected']];
-?>
-
-<div class="card" style="margin-bottom:16px;background:rgba(245,166,35,.05);border-color:rgba(245,166,35,.2)">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-    <span style="font-size:16px">💡</span>
-    <span style="font-size:13px;color:var(--text2)">Changes you submit go to the Admin for approval before being applied. You can track the status of all your requests here.</span>
-  </div>
-</div>
-
-<div class="card" style="padding:0;overflow:hidden">
-  <div class="table-wrap mob-card-table">
-    <table>
-      <thead><tr><th>Type</th><th>Details</th><th>Submitted</th><th>Status</th><th>Reviewed</th></tr></thead>
-      <tbody>
-        <?php if (empty($myRequests)): ?>
-          <tr><td colspan="5" style="text-align:center;color:var(--text2);padding:36px">
-            <div style="font-size:32px;margin-bottom:10px">📋</div>
-            No requests submitted yet.
-          </td></tr>
-        <?php else: foreach ($myRequests as $r):
-          $p = json_decode($r['payload'], true);
-          [$badgeColor, $statusLabel] = $statusStyle[$r['status']] ?? ['blue', $r['status']];
-        ?>
-          <tr>
-            <td data-label="Type">
-              <span class="badge badge-<?= $r['change_type']==='delete'?'red':($r['change_type']==='edit'?'blue':'green') ?>">
-                <?= $typeLabels[$r['change_type']] ?? $r['change_type'] ?>
-              </span>
-            </td>
-            <td data-label="Details" style="font-size:13px">
-              <?php if ($r['change_type'] !== 'delete'): ?>
-                <strong><?= h($p['expense_category'] ?? '—') ?></strong><br>
-                <span style="color:var(--text2);font-size:12px">
-                  <?= h($p['client_name'] ?? 'Internal') ?>
-                  <?php if (!empty($p['total_billable'])): ?> · <?= formatMoney($p['total_billable']) ?><?php endif; ?>
-                  <?php if (!empty($p['expense_date'])): ?> · <?= date('d M Y', strtotime($p['expense_date'])) ?><?php endif; ?>
-                </span>
-              <?php else: ?>
-                <span style="color:var(--text2)">Delete expense record #<?= $r['expense_id'] ?></span>
-              <?php endif; ?>
-            </td>
-            <td data-label="Submitted" style="font-size:12px;color:var(--text2)">
-              <?= date('d M Y', strtotime($r['created_at'])) ?><br>
-              <?= date('H:i', strtotime($r['created_at'])) ?>
-            </td>
-            <td data-label="Status">
-              <span class="badge badge-<?= $badgeColor ?>"><?= $statusLabel ?></span>
-            </td>
-            <td data-label="Reviewed" style="font-size:12px;color:var(--text2)">
-              <?= $r['reviewed_at'] ? date('d M Y H:i', strtotime($r['reviewed_at'])) : '—' ?>
-            </td>
-          </tr>
-        <?php endforeach; endif; ?>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<?php elseif (($tab === 'payment_report' || $tab === 'ads_payment_report') && isAdmin()): ?>
-
-<!-- ── PAYMENT REPORT / ADS PAYMENT REPORT TAB ── -->
-<?php if ($isAdsTab): ?>
-<div style="font-size:12px;color:var(--text2);margin-bottom:10px">📢 Showing paid Ads Expenses only</div>
-<?php endif; ?>
+<!-- ── PAYMENT REPORT TAB ── -->
 <?php
 $prPeriod = $_GET['pr_period'] ?? 'current';
 $prToday  = new DateTime();
@@ -764,9 +517,9 @@ switch ($prPeriod) {
 // Client-Paid expenses are collected directly by the client via their own client card —
 // not a payment we make/track, so they never belong in this report. Likewise, only actual
 // bank transfers belong here — a "Not Bank Transfer" payment (cash/other) has no bank
-// transaction to reconcile, so it's excluded too. record_type splits this report the same
-// way it splits the main tabs: Ads Payment Report shows only Ads Expenses, and vice versa.
-$prWhere  = ["status = 'paid'", "billing_type != 'client_paid'", "payment_method = 'bank_transfer'", $isAdsTab ? "record_type = 'expense'" : "record_type != 'expense'"];
+// transaction to reconcile, so it's excluded too. "Not Bank Transfer" (Ads) expenses never
+// land here at all — they have their own Payment Report on the Ads Expenses page.
+$prWhere  = ["status = 'paid'", "billing_type != 'client_paid'", "payment_method = 'bank_transfer'", "record_type != 'expense'"];
 $prParams = [];
 if ($prFrom && $prTo) {
     $prWhere[] = "payment_date BETWEEN ? AND ?";
@@ -1206,17 +959,12 @@ $rStats = $rStats->fetch();
     </div>
     <div class="modal-body">
       <form method="POST" action="?action=add" enctype="multipart/form-data" onsubmit="return validateAddExpense()">
-        <input type="hidden" name="tab" value="<?= h($tab) ?>">
         <div class="form-grid">
-          <?php if (isAdmin()): ?>
           <div class="form-group full" style="margin-bottom:4px">
             <label>Record Type</label>
             <div style="display:flex;gap:16px;margin-top:6px;flex-wrap:wrap">
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
-                <input type="radio" name="record_type" value="expense" id="addRecordExpense" checked onchange="toggleRecordType('add')"> Not Bank Transfer (Normal Expense)
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
-                <input type="radio" name="record_type" value="bank_transfer_expense" id="addRecordBankTransferExpense" onchange="toggleRecordType('add')"> Bank Transfer (Normal Expense)
+                <input type="radio" name="record_type" value="bank_transfer_expense" id="addRecordBankTransferExpense" checked onchange="toggleRecordType('add')"> Bank Transfer (Normal Expense)
               </label>
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
                 <input type="radio" name="record_type" value="bank_transfer" id="addRecordBankTransfer" onchange="toggleRecordType('add')"> Bank Transfer - Report Only
@@ -1224,7 +972,6 @@ $rStats = $rStats->fetch();
             </div>
             <span style="font-size:11px;color:var(--text2)">"Bank Transfer (Normal Expense)" still counts toward Revenue/Profit and expense totals like a normal expense, and is recorded as paid — it also appears in the Payment Report. "Bank Transfer - Report Only" is excluded from Revenue/Profit and all expense totals — it's only tracked in the Payment Report.</span>
           </div>
-          <?php endif; ?>
           <div class="form-group"><label>Expense Date *</label><input type="date" name="expense_date" required value="<?= date('Y-m-d') ?>"></div>
           <div class="form-group"><label>Billing Month *</label><input type="month" name="billing_month" required value="<?= $filterMonth ?>"></div>
           <div class="form-group"><label>Expense Category *</label>
@@ -1411,24 +1158,12 @@ function toggleClient(prefix) {
     if (notice) notice.style.display = type === 'client_paid' ? 'block' : 'none';
 }
 
-// Opens the shared Add Expense modal, pre-selecting the Record Type that matches
-// which tab the user clicked "+ Add" from — 'ads' (Not Bank Transfer, since Ads Expenses
-// only ever holds that record type) or 'bank' (defaults to Bank Transfer (Normal Expense),
-// since that's what actually shows up back on the main Expenses tab).
-function openAddModal(context) {
-    const bankTransferExpenseRadio = document.getElementById('addRecordBankTransferExpense');
-    const expenseRadio = document.getElementById('addRecordExpense');
-    if (context === 'ads' && expenseRadio) {
-        expenseRadio.checked = true;
-    } else if (context === 'bank' && bankTransferExpenseRadio) {
-        bankTransferExpenseRadio.checked = true;
-    }
+function openAddModal() {
     toggleRecordType('add');
     openModal('addModal');
 }
 
-// Add Expense: three record types —
-//  "expense"                normal expense, full billing fields, manual status
+// Add Expense: two record types (this page is Bank Transfer records only) —
 //  "bank_transfer_expense"  normal expense (billing fields stay, counts in Revenue/Profit)
 //                           but paid via bank transfer at creation — bank ref/receipt shown,
 //                           status forced to Paid, appears in Payment Report
@@ -1515,8 +1250,8 @@ function calcTotal(prefix) {
 }
 
 // Update status via AJAX-style redirect
-function updateStatus(id, status, month, tab) {
-    window.location = `?action=status&id=${id}&s=${status}&month=${month}&tab=${tab || 'expenses'}`;
+function updateStatus(id, status, month) {
+    window.location = `?action=status&id=${id}&s=${status}&month=${month}`;
 }
 
 // Init edit modal calculations

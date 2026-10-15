@@ -676,6 +676,7 @@ HTML;
       <a href="{$siteUrl}/invoices.php" class="nav-item"><span class="nav-icon">📋</span> Invoices</a>
       <a href="{$siteUrl}/freelance.php" class="nav-item"><span class="nav-icon">🧑‍💻</span> Freelance</a>
       <a href="{$siteUrl}/expenses.php" class="nav-item"><span class="nav-icon">🧾</span> Expenses</a>
+      <a href="{$siteUrl}/ads_expenses.php" class="nav-item"><span class="nav-icon">📢</span> Ads Expenses</a>
       <a href="{$siteUrl}/payroll.php" class="nav-item"><span class="nav-icon">💰</span> Payroll</a>
       <a href="{$siteUrl}/commissions.php" class="nav-item"><span class="nav-icon">📈</span> Commissions</a>
       <a href="{$siteUrl}/allowances.php" class="nav-item"><span class="nav-icon">🎁</span> Allowances</a>
@@ -694,6 +695,7 @@ HTML;
       <a href="{$siteUrl}/invoices.php" class="nav-item"><span class="nav-icon">📋</span> Invoices</a>
       <a href="{$siteUrl}/freelance.php" class="nav-item"><span class="nav-icon">🧑‍💻</span> Freelance</a>
       <a href="{$siteUrl}/expenses.php" class="nav-item"><span class="nav-icon">🧾</span> Expenses</a>
+      <a href="{$siteUrl}/ads_expenses.php" class="nav-item"><span class="nav-icon">📢</span> Ads Expenses</a>
       <a href="{$siteUrl}/payroll.php" class="nav-item"><span class="nav-icon">💰</span> Payroll</a>
       <a href="{$siteUrl}/commissions.php" class="nav-item"><span class="nav-icon">📈</span> Commissions</a>
       <a href="{$siteUrl}/allowances.php" class="nav-item"><span class="nav-icon">🎁</span> Allowances</a>
@@ -718,6 +720,10 @@ HTML;
         foreach ($pages as $key => [$icon, $label, $file]) {
             if (canAccess($key)) {
                 echo "      <a href=\"{$siteUrl}/{$file}\" class=\"nav-item\"><span class=\"nav-icon\">{$icon}</span> {$label}</a>\n";
+            }
+            // Ads Expenses shares Expenses' permission — it's the same underlying page split in two.
+            if ($key === 'expenses' && canAccess('expenses')) {
+                echo "      <a href=\"{$siteUrl}/ads_expenses.php\" class=\"nav-item\"><span class=\"nav-icon\">📢</span> Ads Expenses</a>\n";
             }
         }
     }
