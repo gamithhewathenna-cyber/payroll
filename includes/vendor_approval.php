@@ -8,8 +8,10 @@
 // (floating widget badge + cards) so both stay in sync automatically.
 function getPendingApprovals($db) {
     $out = [];
-    $vendorRows = $db->query("SELECT vs.id, vs.project_name, vs.invoice_number, vs.payment_amount, vs.month, f.freelancer_name
-                               FROM vendor_submissions vs JOIN freelancers f ON f.id = vs.freelancer_id
+    $vendorRows = $db->query("SELECT vs.id, vs.project_name, vs.invoice_number, vs.payment_amount, vs.month, f.freelancer_name, c.company_name
+                               FROM vendor_submissions vs
+                               JOIN freelancers f ON f.id = vs.freelancer_id
+                               LEFT JOIN clients c ON c.id = vs.client_id
                                WHERE vs.submission_status = 'pending' ORDER BY vs.submitted_at ASC")->fetchAll();
     foreach ($vendorRows as $r) {
         $out[] = [
@@ -17,6 +19,7 @@ function getPendingApprovals($db) {
             'id'      => (int)$r['id'],
             'title'   => '🧑‍💻 Vendor Invoice — ' . h($r['freelancer_name']),
             'rows'    => [
+                ['Client', h($r['company_name'] ?: '—')],
                 ['Project', h($r['project_name'])],
                 ['Invoice #', h($r['invoice_number'] ?: '—')],
                 ['Amount', formatMoney($r['payment_amount'])],
@@ -53,8 +56,8 @@ function approveVendorSubmission($db, $id, $reviewerName) {
     $sub = $stmt->fetch();
     if (!$sub) return ['success' => false, 'message' => 'Submission not found or already reviewed.'];
 
-    $db->prepare("INSERT INTO freelance_payments (freelancer_id,project_name,invoice_number,invoice_date,payment_amount,payment_method,payment_status,month,invoice_file,invoice_file_name) VALUES (?,?,?,?,?,'bank_transfer','pending',?,?,?)")
-       ->execute([$sub['freelancer_id'],$sub['project_name'],$sub['invoice_number'],$sub['invoice_date'],$sub['payment_amount'],$sub['month'],$sub['invoice_file'],$sub['invoice_file_name']]);
+    $db->prepare("INSERT INTO freelance_payments (freelancer_id,client_id,project_name,invoice_number,invoice_date,payment_amount,payment_method,payment_status,month,invoice_file,invoice_file_name) VALUES (?,?,?,?,?,?,'bank_transfer','pending',?,?,?)")
+       ->execute([$sub['freelancer_id'],$sub['client_id'],$sub['project_name'],$sub['invoice_number'],$sub['invoice_date'],$sub['payment_amount'],$sub['month'],$sub['invoice_file'],$sub['invoice_file_name']]);
 
     $db->prepare("UPDATE vendor_submissions SET submission_status='approved', reviewed_at=NOW(), reviewed_by=? WHERE id=?")
        ->execute([$reviewerName, $id]);

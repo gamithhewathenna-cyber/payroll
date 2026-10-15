@@ -591,7 +591,7 @@ function confirmMarkPaid() {
 <!-- ═══════════════════════════════ APPROVALS TAB ═══════════════════════════════ -->
 
 <?php
-$allSubs = $db->query("SELECT vs.*, f.freelancer_name, f.email FROM vendor_submissions vs JOIN freelancers f ON f.id=vs.freelancer_id ORDER BY vs.submitted_at DESC")->fetchAll();
+$allSubs = $db->query("SELECT vs.*, f.freelancer_name, f.email, c.company_name AS client_name FROM vendor_submissions vs JOIN freelancers f ON f.id=vs.freelancer_id LEFT JOIN clients c ON c.id=vs.client_id ORDER BY vs.submitted_at DESC")->fetchAll();
 $pendingSubs  = array_filter($allSubs, fn($s) => $s['submission_status'] === 'pending');
 $reviewedSubs = array_filter($allSubs, fn($s) => $s['submission_status'] !== 'pending');
 ?>
@@ -626,10 +626,10 @@ $reviewedSubs = array_filter($allSubs, fn($s) => $s['submission_status'] !== 'pe
   </div>
   <div class="table-wrap mob-card-table">
     <table>
-      <thead><tr><th>Freelancer</th><th>Project</th><th>Invoice #</th><th>Date</th><th>Amount</th><th>Invoice</th><th>Submitted</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Freelancer</th><th>Client</th><th>Project</th><th>Invoice #</th><th>Date</th><th>Amount</th><th>Invoice</th><th>Submitted</th><th>Actions</th></tr></thead>
       <tbody>
         <?php if (empty($pendingSubs)): ?>
-          <tr><td colspan="8" style="text-align:center;color:var(--text2);padding:30px">✅ No pending submissions.</td></tr>
+          <tr><td colspan="9" style="text-align:center;color:var(--text2);padding:30px">✅ No pending submissions.</td></tr>
         <?php else: foreach ($pendingSubs as $s): ?>
           <tr style="background:rgba(245,166,35,.03)">
             <td>
@@ -640,6 +640,7 @@ $reviewedSubs = array_filter($allSubs, fn($s) => $s['submission_status'] !== 'pe
                 <span style="font-size:11px;color:var(--red)">⚠️ No email — <a href="?action=edit_freelancer&id=<?= $s['freelancer_id'] ?>&tab=freelancers" style="color:var(--red)">Add email</a></span>
               <?php endif; ?>
             </td>
+            <td><?= h($s['client_name'] ?: '—') ?></td>
             <td><?= h($s['project_name']) ?></td>
             <td><span class="badge badge-blue"><?= h($s['invoice_number']) ?></span></td>
             <td style="font-size:12px"><?= date('d M Y', strtotime($s['invoice_date'])) ?></td>
@@ -666,13 +667,14 @@ $reviewedSubs = array_filter($allSubs, fn($s) => $s['submission_status'] !== 'pe
   <div class="card-title">Previously Reviewed</div>
   <div class="table-wrap mob-card-table">
     <table>
-      <thead><tr><th>Freelancer</th><th>Project</th><th>Invoice #</th><th>Amount</th><th>Status</th><th>Reviewed By</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Freelancer</th><th>Client</th><th>Project</th><th>Invoice #</th><th>Amount</th><th>Status</th><th>Reviewed By</th><th>Actions</th></tr></thead>
       <tbody>
         <?php if (empty($reviewedSubs)): ?>
-          <tr><td colspan="7" style="text-align:center;color:var(--text2);padding:20px">No reviewed submissions yet.</td></tr>
+          <tr><td colspan="8" style="text-align:center;color:var(--text2);padding:20px">No reviewed submissions yet.</td></tr>
         <?php else: foreach ($reviewedSubs as $s): ?>
           <tr>
             <td><strong><?= h($s['freelancer_name']) ?></strong></td>
+            <td><?= h($s['client_name'] ?: '—') ?></td>
             <td><?= h($s['project_name']) ?></td>
             <td><?= h($s['invoice_number']) ?></td>
             <td><?= formatMoney($s['payment_amount']) ?></td>

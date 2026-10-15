@@ -40,16 +40,20 @@ if (isset($_GET['check_invoice'])) {
 // Load freelancers for dropdown
 $freelancers = $db->query("SELECT id, freelancer_name FROM freelancers WHERE status='active' ORDER BY freelancer_name")->fetchAll();
 
+// Load clients for dropdown — same list as the Clients section
+$clients = $db->query("SELECT id, company_name FROM clients WHERE status='active' ORDER BY company_name")->fetchAll();
+
 // Handle submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $d   = $_POST;
     $fid = (int)($d['freelancer_id'] ?? 0);
+    $cid = (int)($d['client_id'] ?? 0);
     // Build full invoice number from suffix
     $suffix = trim($d['invoice_number_suffix'] ?? '');
     $inv    = 'Invoice-' . $suffix;
 
     // Validate required
-    if (!$fid || !trim($d['project_name'] ?? '') || !$suffix || !trim($d['invoice_date'] ?? '') || !trim($d['payment_amount'] ?? '') || !trim($d['month'] ?? '')) {
+    if (!$fid || !$cid || !trim($d['project_name'] ?? '') || !$suffix || !trim($d['invoice_date'] ?? '') || !trim($d['payment_amount'] ?? '') || !trim($d['month'] ?? '')) {
         $error = 'Please fill in all required fields.';
     }
     // Validate file
@@ -96,8 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $filename = $safeName . '_' . time() . '.pdf';
             if (move_uploaded_file($_FILES['invoice_file']['tmp_name'], $dir . $filename)) {
                 $filePath = "invoices/{$year}/{$month}/{$filename}";
-                $db->prepare("INSERT INTO vendor_submissions (freelancer_id,project_name,invoice_number,invoice_date,payment_amount,month,invoice_file,invoice_file_name) VALUES (?,?,?,?,?,?,?,?)")
-                   ->execute([$fid,trim($d['project_name']),$inv,$invDate,$d['payment_amount'],trim($d['month']),$filePath,$_FILES['invoice_file']['name']]);
+                $db->prepare("INSERT INTO vendor_submissions (freelancer_id,client_id,project_name,invoice_number,invoice_date,payment_amount,month,invoice_file,invoice_file_name) VALUES (?,?,?,?,?,?,?,?,?)")
+                   ->execute([$fid,$cid,trim($d['project_name']),$inv,$invDate,$d['payment_amount'],trim($d['month']),$filePath,$_FILES['invoice_file']['name']]);
                 $success = true;
             } else {
                 $error = 'Failed to save file. Please try again.';
@@ -202,6 +206,18 @@ select option { background:var(--bg2); }
           <?php foreach ($freelancers as $f): ?>
             <option value="<?= $f['id'] ?>" <?= (isset($_POST['freelancer_id']) && $_POST['freelancer_id'] == $f['id']) ? 'selected' : '' ?>>
               <?= h($f['freelancer_name']) ?>
+            </option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Client <span class="req">*</span></label>
+        <select name="client_id" id="clientId" required>
+          <option value="">— Select the client this invoice is for —</option>
+          <?php foreach ($clients as $c): ?>
+            <option value="<?= $c['id'] ?>" <?= (isset($_POST['client_id']) && $_POST['client_id'] == $c['id']) ? 'selected' : '' ?>>
+              <?= h($c['company_name']) ?>
             </option>
           <?php endforeach; ?>
         </select>
@@ -394,6 +410,10 @@ function handleFileSelect(input) {
 
 document.getElementById('vendorForm')?.addEventListener('submit', function(e) {
     e.preventDefault();
+    if (!document.getElementById('clientId').value) {
+        alert('Please select the client this invoice is for.');
+        return;
+    }
     const suffix = document.getElementById('invoiceNumberSuffix').value.trim();
     if (!suffix) {
         alert('Please enter your invoice number.');
