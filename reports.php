@@ -6,6 +6,7 @@ $db = getDB();
 
 $filterMonth = $_GET['month'] ?? date('Y-m');
 $reportType = $_GET['type'] ?? 'monthly';
+$tab = $_GET['tab'] ?? 'payroll';
 
 // Monthly payroll summary
 $monthlyReport = $db->prepare("SELECT p.*, e.full_name, e.position, e.department FROM payroll p JOIN employees e ON e.id=p.employee_id WHERE p.month=? ORDER BY e.department, e.full_name");
@@ -67,6 +68,7 @@ pageHeader('Reports');
 
 <div class="section-header">
   <form method="GET" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type="hidden" name="tab" value="<?= h($tab) ?>">
     <input type="month" name="month" value="<?= h($filterMonth) ?>" style="width:160px">
     <button type="submit" class="btn btn-ghost btn-sm">Update</button>
   </form>
@@ -83,6 +85,15 @@ pageHeader('Reports');
   <div class="stat-card"><div class="stat-label">Deductions</div><div class="stat-value" style="font-size:20px"><?= formatMoney($totals['deduct'] + $totals['advance']) ?></div></div>
 </div>
 
+<!-- Tabs -->
+<div class="no-print" style="display:flex;gap:6px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+  <a href="?tab=payroll&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='payroll'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">💰 Monthly Payroll</a>
+  <a href="?tab=commissions&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='commissions'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">📈 Commissions</a>
+  <a href="?tab=allowances&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='allowances'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">🎁 Allowances</a>
+  <a href="?tab=invoice_cost&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='invoice_cost'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">💼 Invoice &amp; Freelance Cost</a>
+</div>
+
+<?php if ($tab === 'payroll'): ?>
 <!-- Monthly Payroll Report -->
 <div class="card">
   <div class="card-title">Monthly Payroll Report — <?= date('F Y', strtotime($filterMonth.'-01')) ?></div>
@@ -119,7 +130,9 @@ pageHeader('Reports');
     </table>
   </div>
 </div>
+<?php endif; ?>
 
+<?php if ($tab === 'commissions'): ?>
 <!-- Commissions -->
 <div class="card">
   <div class="card-title">Commission Report — <?= date('F Y', strtotime($filterMonth.'-01')) ?></div>
@@ -142,7 +155,9 @@ pageHeader('Reports');
     </table>
   </div>
 </div>
+<?php endif; ?>
 
+<?php if ($tab === 'allowances'): ?>
 <!-- Allowances -->
 <div class="card">
   <div class="card-title">Allowance Report — <?= date('F Y', strtotime($filterMonth.'-01')) ?></div>
@@ -164,7 +179,9 @@ pageHeader('Reports');
     </table>
   </div>
 </div>
+<?php endif; ?>
 
+<?php if ($tab === 'invoice_cost'): ?>
 <!-- Invoice & Freelance Cost Report -->
 <div class="card">
   <div class="card-title">💼 Invoice &amp; Freelance Cost Report — <?= date('F Y', strtotime($filterMonth.'-01')) ?></div>
@@ -206,5 +223,6 @@ pageHeader('Reports');
     </table>
   </div>
 </div>
+<?php endif; ?>
 
 <?php pageFooter(); ?>
