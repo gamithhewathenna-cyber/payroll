@@ -159,7 +159,9 @@ $filterProject  = trim($_GET['project'] ?? '');
 $filterApproval = trim($_GET['approval'] ?? '');
 $tab            = $_GET['tab'] ?? 'ads';
 
-$where  = ["billing_month = ?", "record_type = 'expense'"];
+// Internal company costs aren't ad campaigns — they belong on the Expenses page instead,
+// even when entered as "Not Bank Transfer", so exclude billing_type='internal' here.
+$where  = ["billing_month = ?", "record_type = 'expense'", "billing_type != 'internal'"];
 $params = [$filterMonth];
 if ($filterClient)   { $where[] = "client_name LIKE ?";   $params[] = "%$filterClient%"; }
 if ($filterCat)      { $where[] = "expense_category = ?"; $params[] = $filterCat; }
@@ -176,13 +178,12 @@ $expenses = $expenses->fetchAll();
 $stats = $db->prepare("SELECT
     COALESCE(SUM(cost_amount * exchange_rate),0) as total_cost,
     COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable ELSE 0 END),0) as total_billable,
-    COALESCE(SUM(CASE WHEN billing_type = 'internal' THEN cost_amount * exchange_rate ELSE 0 END),0) as internal_cost,
     COALESCE(SUM(CASE WHEN billing_type = 'client_paid' THEN cost_amount * exchange_rate ELSE 0 END),0) as client_paid_cost,
     COALESCE(SUM(CASE WHEN status IN ('pending','invoiced') AND billing_type != 'client_paid' THEN total_billable ELSE 0 END),0) as outstanding,
     COALESCE(SUM(CASE WHEN status = 'paid' AND billing_type != 'client_paid' THEN total_billable ELSE 0 END),0) as paid_amt,
     COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable - (cost_amount * exchange_rate) ELSE 0 END),0) as markup_earned,
     COALESCE(SUM(CASE WHEN approval_status = 'pending_approval' THEN 1 ELSE 0 END),0) as pending_approvals
-FROM expenses WHERE billing_month = ? AND record_type = 'expense'");
+FROM expenses WHERE billing_month = ? AND record_type = 'expense' AND billing_type != 'internal'");
 $stats->execute([$filterMonth]);
 $stats = $stats->fetch();
 
@@ -295,7 +296,6 @@ if (isAdmin()) {
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr));margin-bottom:20px">
   <div class="stat-card"><div class="stat-label">Total Ads Expenses</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['total_cost']) ?></div><div class="stat-sub"><?= date('M Y', strtotime($filterMonth.'-01')) ?></div></div>
   <div class="stat-card blue"><div class="stat-label">Client Billable</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['total_billable']) ?></div><div class="stat-sub">Incl. markup</div></div>
-  <div class="stat-card"><div class="stat-label">Internal Costs</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['internal_cost']) ?></div><div class="stat-sub">Not billable</div></div>
   <div class="stat-card" style="border-color:rgba(168,85,247,.3)">
     <div class="stat-label" style="color:#a855f7">💳 Client-Paid</div>
     <div class="stat-value" style="font-size:18px"><?= formatMoney($stats['client_paid_cost']) ?></div>
@@ -687,7 +687,7 @@ $byCategory = $db->prepare("SELECT expense_category, COUNT(*) as cnt,
     SUM(cost_amount * exchange_rate) as total_cost,
     SUM(total_billable) as total_bill,
     SUM(total_billable - (cost_amount * exchange_rate)) as markup
-    FROM expenses WHERE {$rWhere} AND billing_type != 'client_paid'
+    FROM expenses WHERE {$rWhere} AND billing_type NOT IN ('client_paid','internal')
     GROUP BY expense_category ORDER BY total_cost DESC");
 $byCategory->execute($rParams);
 $byCategory = $byCategory->fetchAll();
@@ -700,19 +700,19 @@ $byClient = $db->prepare("SELECT client_name, billing_type, COUNT(*) as cnt,
 $byClient->execute($rParams);
 $byClient = $byClient->fetchAll();
 
-$byStatus = $db->prepare("SELECT status, COUNT(*) as cnt, SUM(total_billable) as total FROM expenses WHERE {$rWhere} AND billing_type != 'client_paid' GROUP BY status");
+$byStatus = $db->prepare("SELECT status, COUNT(*) as cnt, SUM(total_billable) as total FROM expenses WHERE {$rWhere} AND billing_type NOT IN ('client_paid','internal') GROUP BY status");
 $byStatus->execute($rParams);
 $byStatus = $byStatus->fetchAll();
 
-// Report stats for selected client/month
+// Report stats for selected client/month — Internal costs are excluded entirely from this
+// page's report (they're filed under the Expenses page instead), so there's no internal_cost figure here.
 $rStats = $db->prepare("SELECT
     COALESCE(SUM(cost_amount * exchange_rate),0) as total_cost,
     COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable ELSE 0 END),0) as total_billable,
-    COALESCE(SUM(CASE WHEN billing_type = 'internal' THEN cost_amount * exchange_rate ELSE 0 END),0) as internal_cost,
     COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable - (cost_amount * exchange_rate) ELSE 0 END),0) as markup_earned,
     COALESCE(SUM(CASE WHEN status IN ('pending','invoiced') THEN total_billable ELSE 0 END),0) as outstanding,
     COALESCE(SUM(CASE WHEN status = 'paid' THEN total_billable ELSE 0 END),0) as paid_amt
-FROM expenses WHERE {$rWhere} AND billing_type != 'client_paid'");
+FROM expenses WHERE {$rWhere} AND billing_type NOT IN ('client_paid','internal')");
 $rStats->execute($rParams);
 $rStats = $rStats->fetch();
 ?>
@@ -894,7 +894,6 @@ $rStats = $rStats->fetch();
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px">
       <div style="text-align:center"><div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:6px">Total Spend</div><div style="font-size:22px;font-weight:800"><?= formatMoney($rStats['total_cost']) ?></div></div>
       <div style="text-align:center"><div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:6px">Total Billable</div><div style="font-size:22px;font-weight:800;color:var(--accent)"><?= formatMoney($rStats['total_billable']) ?></div></div>
-      <div style="text-align:center"><div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:6px">Internal</div><div style="font-size:22px;font-weight:800"><?= formatMoney($rStats['internal_cost']) ?></div></div>
       <div style="text-align:center"><div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:6px">Markup Earned</div><div style="font-size:22px;font-weight:800;color:var(--green)"><?= formatMoney($rStats['markup_earned']) ?></div></div>
       <div style="text-align:center"><div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:6px">Outstanding</div><div style="font-size:22px;font-weight:800;color:var(--red)"><?= formatMoney($rStats['outstanding']) ?></div></div>
       <div style="text-align:center"><div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:6px">Paid</div><div style="font-size:22px;font-weight:800;color:var(--green)"><?= formatMoney($rStats['paid_amt']) ?></div></div>
@@ -1030,9 +1029,9 @@ $rStats = $rStats->fetch();
             <select name="billing_type" id="addBillingType" onchange="toggleClient('add')">
               <option value="client" selected>Client Expense (We Pay)</option>
               <option value="shared">Shared (Multiple Clients)</option>
-              <option value="internal">Internal Company</option>
               <option value="client_paid">💳 Client-Paid (Client Pays Directly)</option>
             </select>
+            <span style="font-size:11px;color:var(--text2)">Internal company costs aren't ad campaigns — log those on the Expenses page instead.</span>
           </div>
           <div id="addClientPaidNotice" style="display:none;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.3);border-radius:8px;padding:10px 14px;font-size:12.5px;color:#a855f7;grid-column:1/-1">
             💳 <strong>Client-Paid Expense</strong> — This cost was paid directly by the client. It will be recorded for reporting purposes only and <strong>excluded from your company's expense totals</strong>.

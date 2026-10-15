@@ -164,9 +164,10 @@ $filterStatus   = trim($_GET['status'] ?? '');
 $filterProject  = trim($_GET['project'] ?? '');
 $tab            = $_GET['tab'] ?? 'expenses';
 
-// This page only ever holds Bank Transfer records — "Not Bank Transfer" normal
-// expenses live on the separate Ads Expenses page instead.
-$where  = ["billing_month = ?", "record_type != 'expense'"];
+// This page holds Bank Transfer records, plus any "Not Bank Transfer" expense that's
+// billing_type='internal' — internal company costs aren't ad campaigns, so they belong
+// here rather than on the client-billable Ads Expenses page.
+$where  = ["billing_month = ?", "(record_type != 'expense' OR billing_type = 'internal')"];
 $params = [$filterMonth];
 if ($filterClient)  { $where[] = "client_name LIKE ?";   $params[] = "%$filterClient%"; }
 if ($filterCat)     { $where[] = "expense_category = ?"; $params[] = $filterCat; }
@@ -187,7 +188,7 @@ $stats = $db->prepare("SELECT
     COALESCE(SUM(CASE WHEN status IN ('pending','invoiced') AND billing_type != 'client_paid' THEN total_billable ELSE 0 END),0) as outstanding,
     COALESCE(SUM(CASE WHEN status = 'paid' AND billing_type != 'client_paid' THEN total_billable ELSE 0 END),0) as paid_amt,
     COALESCE(SUM(CASE WHEN billing_type IN ('client','shared') THEN total_billable - (cost_amount * exchange_rate) ELSE 0 END),0) as markup_earned
-FROM expenses WHERE billing_month = ? AND record_type != 'expense'");
+FROM expenses WHERE billing_month = ? AND (record_type != 'expense' OR billing_type = 'internal')");
 $stats->execute([$filterMonth]);
 $stats = $stats->fetch();
 
@@ -220,7 +221,7 @@ pageHeader('Expenses & Client Rebilling');
 
 <!-- ── Stats ── -->
 <?php if ($tab === 'expenses'): ?>
-<div style="font-size:12px;color:var(--text2);margin-bottom:6px">💰 Expenses totals (Bank Transfer records)</div>
+<div style="font-size:12px;color:var(--text2);margin-bottom:6px">💰 Expenses totals (Bank Transfer & Internal records)</div>
 <?php endif; ?>
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr));margin-bottom:20px">
   <div class="stat-card"><div class="stat-label">Total Expenses</div><div class="stat-value" style="font-size:18px"><?= formatMoney($stats['total_cost']) ?></div><div class="stat-sub"><?= date('M Y', strtotime($filterMonth.'-01')) ?></div></div>
