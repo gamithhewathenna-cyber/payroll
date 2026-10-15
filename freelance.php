@@ -225,6 +225,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'edit_payment') {
         $payDate  = !empty($d['payment_date']) ? $d['payment_date'] : null;
         $invAmt   = (float)($d['invoice_amount']  ?? $d['payment_amount'] ?? 0);
+        // Safety net: never let a blank/zero amount silently wipe out a real existing payment_amount
+        // (this is how the "Total Invoice Amount" field used to pre-fill as 0 for older payments).
+        if ($invAmt <= 0) {
+            $existing = $db->prepare("SELECT payment_amount FROM freelance_payments WHERE id=?");
+            $existing->execute([$id]);
+            $invAmt = (float)($existing->fetchColumn() ?: 0);
+        }
         $advAmt   = trim($d['advance_amount'] ?? '') !== '' ? (float)$d['advance_amount'] : $invAmt;
         $balDue   = round(max(0, $invAmt - $advAmt), 2);
 
@@ -813,15 +820,22 @@ function confirmReject() {
           <div class="form-group full"><label>Project Name *</label><input name="project_name" required value="<?= h($editPayment['project_name']) ?>"></div>
           <div class="form-group"><label>Invoice Number</label><input name="invoice_number" value="<?= h($editPayment['invoice_number']) ?>"></div>
           <div class="form-group"><label>Invoice Date *</label><input type="date" name="invoice_date" value="<?= h($editPayment['invoice_date'] ?? date('Y-m-d')) ?>" required></div>
+          <?php
+            // invoice_amount/advance_amount are stored as 0 (not NULL) on payments added via the
+            // simple Add Payment form, which has no such fields — "??" doesn't fall back on 0, only
+            // on NULL, so treat a zero/blank value here as "not set yet" and fall back to payment_amount.
+            $fInvVal = !empty($editPayment['invoice_amount']) ? $editPayment['invoice_amount'] : $editPayment['payment_amount'];
+            $fAdvVal = !empty($editPayment['advance_amount']) ? $editPayment['advance_amount'] : $editPayment['payment_amount'];
+          ?>
           <div class="form-group"><label>Total Invoice Amount *</label>
             <input type="number" name="invoice_amount" id="fInvAmt" step="0.01" required
-              value="<?= h($editPayment['invoice_amount'] ?? $editPayment['payment_amount']) ?>"
+              value="<?= h($fInvVal) ?>"
               placeholder="0.00" oninput="calcBal()">
             <span style="font-size:11px;color:var(--text2)">Full amount on the vendor invoice</span>
           </div>
           <div class="form-group"><label>Advance / Paying Now</label>
             <input type="number" name="advance_amount" id="fAdvAmt" step="0.01"
-              value="<?= h($editPayment['advance_amount'] ?? $editPayment['payment_amount']) ?>"
+              value="<?= h($fAdvVal) ?>"
               placeholder="Leave blank = pay in full" oninput="calcBal()">
             <span style="font-size:11px;color:var(--text2)">Amount being paid now</span>
           </div>
@@ -829,8 +843,8 @@ function confirmReject() {
             <label>Balance Due</label>
             <div id="fBalDisplay" style="font-size:22px;font-weight:800;color:var(--yellow);padding:8px 0">
               <?php
-                $fInv = (float)($editPayment['invoice_amount'] ?? $editPayment['payment_amount'] ?? 0);
-                $fAdv = (float)($editPayment['advance_amount'] ?? $editPayment['payment_amount'] ?? $fInv);
+                $fInv = (float)$fInvVal;
+                $fAdv = (float)$fAdvVal;
                 $fSym = getSetting('currency_symbol','Rs.');
                 echo $fSym . ' ' . number_format(max(0, $fInv - $fAdv), 2);
               ?>
