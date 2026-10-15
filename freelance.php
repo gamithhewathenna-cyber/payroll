@@ -281,7 +281,7 @@ $freelancers = $db->query("SELECT * FROM freelancers ORDER BY freelancer_name")-
 
 // Client invoices, for linking a freelance payment to the project/invoice it was incurred for
 $clientInvoices = $db->query("
-    SELECT i.id, i.invoice_number, i.total, i.status, c.company_name
+    SELECT i.id, i.invoice_number, i.total, i.status, i.billing_month, c.company_name
     FROM invoices i JOIN clients c ON c.id = i.client_id
     WHERE i.invoice_type = 'invoice'
     ORDER BY i.issue_date DESC
@@ -518,17 +518,18 @@ pageHeader('Freelance Payroll');
       </div>
       <div class="form-group" style="margin-bottom:16px">
         <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
+        <input type="month" id="markPaidInvoiceMonth" onchange="filterInvoiceList('markPaidInvoiceMonth','markPaidInvoiceList')" style="margin-bottom:8px">
         <div id="markPaidInvoiceList" style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
           <?php if (empty($clientInvoices)): ?>
             <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
           <?php else: foreach ($clientInvoices as $ci): ?>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+            <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
               <input type="checkbox" class="markPaidInvoiceCheckbox" value="<?= $ci['id'] ?>" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
               <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
             </label>
           <?php endforeach; endif; ?>
         </div>
-        <span style="font-size:11px;color:var(--text2)">Link this payment to the client invoice(s)/project(s) it was incurred for, for Reports tracking.</span>
+        <span style="font-size:11px;color:var(--text2)">Filter by month, then link this payment to the client invoice(s)/project(s) it was incurred for, for Reports tracking.</span>
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn btn-success" style="width:auto;padding:8px 20px" onclick="confirmMarkPaid()">✓ Confirm Paid</button>
@@ -540,11 +541,19 @@ pageHeader('Freelance Payroll');
 
 <script>
 let markPaidId = null;
+function filterInvoiceList(monthInputId, listId) {
+    const month = document.getElementById(monthInputId).value;
+    document.querySelectorAll(`#${listId} .invoiceRow`).forEach(row => {
+        row.style.display = (!month || row.dataset.month === month) ? '' : 'none';
+    });
+}
 function openMarkPaid(id) {
     markPaidId = id;
     document.getElementById('markPaidDate').value = new Date().toISOString().slice(0,10);
     document.getElementById('markPaidRef').value = '';
     document.querySelectorAll('.markPaidInvoiceCheckbox').forEach(cb => cb.checked = false);
+    document.getElementById('markPaidInvoiceMonth').value = '<?= h($filterMonth) ?>';
+    filterInvoiceList('markPaidInvoiceMonth','markPaidInvoiceList');
     openModal('markPaidModal');
 }
 function confirmMarkPaid() {
@@ -836,11 +845,12 @@ function confirmReject() {
           <div class="form-group full">
             <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
             <?php $editLinkedIds = array_column($paymentInvoiceLinks[$editPayment['id']] ?? [], 'client_invoice_id'); ?>
-            <div style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
+            <input type="month" id="editPaymentInvoiceMonth" value="<?= h($editPayment['month']) ?>" onchange="filterInvoiceList('editPaymentInvoiceMonth','editPaymentInvoiceList')" style="margin-bottom:8px">
+            <div id="editPaymentInvoiceList" style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
               <?php if (empty($clientInvoices)): ?>
                 <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
               <?php else: foreach ($clientInvoices as $ci): ?>
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+                <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
                   <input type="checkbox" name="client_invoice_ids[]" value="<?= $ci['id'] ?>" <?= in_array((int)$ci['id'], $editLinkedIds, true) ? 'checked' : '' ?> style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
                   <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
                 </label>
@@ -942,7 +952,12 @@ function calcBal() {
     const disp = document.getElementById('fBalDisplay');
     if (disp) disp.textContent = currSym + ' ' + bal.toLocaleString('en', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
-document.addEventListener('DOMContentLoaded', calcBal);
+document.addEventListener('DOMContentLoaded', () => {
+    calcBal();
+    if (document.getElementById('editPaymentInvoiceMonth')) {
+        filterInvoiceList('editPaymentInvoiceMonth', 'editPaymentInvoiceList');
+    }
+});
 </script>
 
 <?php pageFooter(); ?>
