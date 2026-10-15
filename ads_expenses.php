@@ -1,7 +1,7 @@
 <?php
 require_once 'config.php';
 require_once 'includes/layout.php';
-requireAccess('expenses');
+requireAccess('ads_expenses');
 $db = getDB();
 
 // ── Actions ────────────────────────────────────────────────

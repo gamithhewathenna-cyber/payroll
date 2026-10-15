@@ -15,6 +15,7 @@ $allPages = [
     'commissions' => ['📈', 'Commissions'],
     'allowances'  => ['🎁', 'Allowances'],
     'expenses'    => ['🧾', 'Expenses'],
+    'ads_expenses' => ['📢', 'Ads Expenses'],
     'clients'     => ['🏢', 'Clients'],
     'payslips'    => ['📄', 'Payslips'],
     'reports'     => ['📊', 'Reports'],

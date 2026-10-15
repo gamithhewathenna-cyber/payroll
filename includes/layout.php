@@ -713,6 +713,7 @@ HTML;
             'commissions' => ['📈', 'Commissions', 'commissions.php'],
             'allowances'  => ['🎁', 'Allowances',  'allowances.php'],
             'expenses'    => ['🧾', 'Expenses',    'expenses.php'],
+            'ads_expenses' => ['📢', 'Ads Expenses', 'ads_expenses.php'],
             'clients'     => ['🏢', 'Clients',     'clients.php'],
             'payslips'    => ['📄', 'Payslips',    'payslips.php'],
             'reports'     => ['📊', 'Reports',     'reports.php'],
@@ -720,10 +721,6 @@ HTML;
         foreach ($pages as $key => [$icon, $label, $file]) {
             if (canAccess($key)) {
                 echo "      <a href=\"{$siteUrl}/{$file}\" class=\"nav-item\"><span class=\"nav-icon\">{$icon}</span> {$label}</a>\n";
-            }
-            // Ads Expenses shares Expenses' permission — it's the same underlying page split in two.
-            if ($key === 'expenses' && canAccess('expenses')) {
-                echo "      <a href=\"{$siteUrl}/ads_expenses.php\" class=\"nav-item\"><span class=\"nav-icon\">📢</span> Ads Expenses</a>\n";
             }
         }
     }
