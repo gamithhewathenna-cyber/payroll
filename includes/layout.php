@@ -45,7 +45,11 @@ body { font-family:'Poppins',sans-serif; background:var(--bg); color:var(--text)
 .content-area { padding:20px; flex:1; }
 
 /* ── Flash ── */
-.flash-msg { position:fixed; top:16px; right:16px; z-index:9999; max-width:360px; padding:12px 16px; border-radius:var(--radius); color:#fff; font-weight:500; font-size:13.5px; box-shadow:0 6px 20px rgba(0,0,0,.35); transition:opacity .3s; }
+/* pointer-events:none — this toast sits top-right at z-index:9999, directly over where every
+   page's "+ Add X" button lands (.section-header is flex/space-between, so its right-hand
+   button ends up right under this box). It lingers ~3.8s after every redirect, which is exactly
+   when users click "+ Add" again — without this, it silently swallows that click. */
+.flash-msg { position:fixed; top:16px; right:16px; z-index:9999; max-width:360px; padding:12px 16px; border-radius:var(--radius); color:#fff; font-weight:500; font-size:13.5px; box-shadow:0 6px 20px rgba(0,0,0,.35); transition:opacity .3s; pointer-events:none; }
 @media(max-width:768px) { .flash-msg { left:16px; right:16px; max-width:none; top:12px; } }
 
 /* ── Cards ── */
