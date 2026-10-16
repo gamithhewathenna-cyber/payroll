@@ -114,6 +114,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Staff users — queue changes for admin approval
     if (!isAdmin()) {
+        // JSON_INVALID_UTF8_SUBSTITUTE — without this, a single invalid UTF-8 byte anywhere in
+        // description/notes/project_name (e.g. from a pasted character) makes json_encode()
+        // silently return false instead of a string. That stored a broken/empty payload, which
+        // then decoded to null on approval and tried to insert NULL into non-nullable columns —
+        // the exact cause of the "Approve" button 500ing.
         $payload = json_encode([
             'expense_date' => $d['expense_date'], 'billing_month' => $d['billing_month'],
             'client_name' => $clientName, 'billing_type' => $billingType,
@@ -123,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'markup_percentage' => $markup, 'additional_fee' => $addFee,
             'total_billable' => $total, 'status' => $status,
             'notes' => trim($d['notes']??''), 'receipt_path' => $receiptPath,
-        ]);
+        ], JSON_INVALID_UTF8_SUBSTITUTE);
         $db->prepare("INSERT INTO expense_change_requests (expense_id, change_type, payload, requested_by, status) VALUES (?,?,?,?,'pending')")
            ->execute([$action === 'edit' ? $id : null, $action, $payload, $_SESSION['full_name']]);
         setFlash('success', '✅ Your request has been submitted and is awaiting Admin approval.');
@@ -222,17 +227,27 @@ if (isAdmin()) {
         $req = $req->fetch();
         if ($req) {
             $p = json_decode($req['payload'], true);
-            if ($req['change_type'] === 'add') {
-                $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,record_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,'expense',?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
-                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$req['requested_by'],$_SESSION['full_name']]);
-            } elseif ($req['change_type'] === 'edit') {
-                $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
-                   ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$_SESSION['full_name'],$req['expense_id']]);
-            } elseif ($req['change_type'] === 'delete') {
-                $db->prepare("DELETE FROM expenses WHERE id=?")->execute([$req['expense_id']]);
+            if ($p === null && $req['change_type'] !== 'delete') {
+                // Payload didn't decode (e.g. it was stored broken before the UTF-8 fix below
+                // existed) — refuse to insert a row full of NULLs instead of 500ing.
+                setFlash('error', '❌ This request\'s saved data is corrupted and can\'t be approved. Please reject it and ask the submitter to re-enter it.');
+                header('Location: ' . SITE_URL . '/ads_expenses.php?tab=ads&month=' . $filterMonth); exit;
             }
-            $db->prepare("UPDATE expense_change_requests SET status='approved', reviewed_at=NOW() WHERE id=?")->execute([$reqId]);
-            setFlash('success', '✅ Change approved and applied successfully.');
+            try {
+                if ($req['change_type'] === 'add') {
+                    $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,record_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at) VALUES (?,?,?,?,'expense',?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW())")
+                       ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$req['requested_by'],$_SESSION['full_name']]);
+                } elseif ($req['change_type'] === 'edit') {
+                    $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approval_status='approved',approved_by=?,approved_at=NOW() WHERE id=?")
+                       ->execute([$p['expense_date'],$p['billing_month'],$p['client_name'],$p['billing_type'],$p['expense_category'],$p['project_name'],$p['description'],$p['cost_amount'],$p['currency'],$p['exchange_rate'],$p['markup_percentage'],$p['additional_fee'],$p['total_billable'],$p['status'],$p['notes'],$p['receipt_path']??null,$_SESSION['full_name'],$req['expense_id']]);
+                } elseif ($req['change_type'] === 'delete') {
+                    $db->prepare("DELETE FROM expenses WHERE id=?")->execute([$req['expense_id']]);
+                }
+                $db->prepare("UPDATE expense_change_requests SET status='approved', reviewed_at=NOW() WHERE id=?")->execute([$reqId]);
+                setFlash('success', '✅ Change approved and applied successfully.');
+            } catch (Exception $e) {
+                setFlash('error', '❌ Could not approve this request: ' . $e->getMessage());
+            }
         }
         header('Location: ' . SITE_URL . '/ads_expenses.php?tab=ads&month=' . $filterMonth); exit;
     }
