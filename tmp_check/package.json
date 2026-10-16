@@ -1,0 +1,13 @@
+{
+  "name": "tmp_check",
+  "version": "1.0.0",
+  "description": "",
+  "main": "ads_expenses_script_0.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
