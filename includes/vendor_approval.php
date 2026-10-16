@@ -8,11 +8,19 @@
 // (floating widget badge + cards) so both stay in sync automatically.
 function getPendingApprovals($db) {
     $out = [];
-    $vendorRows = $db->query("SELECT vs.id, vs.project_name, vs.invoice_number, vs.payment_amount, vs.month, f.freelancer_name, c.company_name
-                               FROM vendor_submissions vs
-                               JOIN freelancers f ON f.id = vs.freelancer_id
-                               LEFT JOIN clients c ON c.id = vs.client_id
-                               WHERE vs.submission_status = 'pending' ORDER BY vs.submitted_at ASC")->fetchAll();
+    // This runs on EVERY admin page load (layout.php's footer widget), so a schema drift here
+    // (e.g. a column added by a migration that hasn't been run yet) must never be allowed to
+    // throw — an uncaught exception here would cut off the rest of pageFooter()'s output,
+    // including the <script> that defines openModal(), silently breaking every popup on the page.
+    try {
+        $vendorRows = $db->query("SELECT vs.id, vs.project_name, vs.invoice_number, vs.payment_amount, vs.month, f.freelancer_name, c.company_name
+                                   FROM vendor_submissions vs
+                                   JOIN freelancers f ON f.id = vs.freelancer_id
+                                   LEFT JOIN clients c ON c.id = vs.client_id
+                                   WHERE vs.submission_status = 'pending' ORDER BY vs.submitted_at ASC")->fetchAll();
+    } catch (Exception $e) {
+        $vendorRows = [];
+    }
     foreach ($vendorRows as $r) {
         $out[] = [
             'type'    => 'vendor_submission',
@@ -27,7 +35,11 @@ function getPendingApprovals($db) {
             ],
         ];
     }
-    $expenseRows = $db->query("SELECT id, requested_by, change_type, payload, created_at FROM expense_change_requests WHERE status = 'pending' ORDER BY created_at ASC")->fetchAll();
+    try {
+        $expenseRows = $db->query("SELECT id, requested_by, change_type, payload, created_at FROM expense_change_requests WHERE status = 'pending' ORDER BY created_at ASC")->fetchAll();
+    } catch (Exception $e) {
+        $expenseRows = [];
+    }
     foreach ($expenseRows as $r) {
         $p = json_decode($r['payload'], true) ?: [];
         $label = ['add'=>'Add','edit'=>'Edit','delete'=>'Delete'][$r['change_type']] ?? $r['change_type'];
