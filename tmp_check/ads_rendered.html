@@ -1,0 +1,296 @@
+
+<!-- ── Filters ── -->
+<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+  <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;align-items:end">
+    <input type="hidden" name="tab" value="ads">
+    <div class="form-group" style="margin:0">
+      <label>Month</label>
+      <input type="month" name="month" value="2026-10">
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>Client</label>
+      <select name="client">
+        <option value="">All Clients</option>
+                  <option value="Acme Corp" >Acme Corp</option>
+              </select>
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>Category</label>
+      <select name="cat">
+        <option value="">All Categories</option>
+                  <option value="Facebook Ads" >Facebook Ads</option>
+                  <option value="Instagram Ads" >Instagram Ads</option>
+                  <option value="Google Ads" >Google Ads</option>
+              </select>
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>Project / Work</label>
+      <input type="text" name="project" value="" placeholder="Filter by project...">
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>Status</label>
+      <select name="status">
+        <option value="">All Status</option>
+        <option value="pending" >Pending</option>
+        <option value="invoiced" >Invoiced</option>
+        <option value="paid" >Paid</option>
+        <option value="cancelled" >Cancelled</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>Approval</label>
+      <select name="approval">
+        <option value="">All</option>
+        <option value="pending_approval" >⏳ Pending</option>
+        <option value="approved"         >✅ Approved</option>
+        <option value="rejected"         >❌ Rejected</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <button type="submit" class="btn btn-primary btn-sm" style="flex:1">Filter</button>
+      <a href="?tab=ads&month=2026-10" class="btn btn-ghost btn-sm">Clear</a>
+    </div>
+  </form>
+</div>
+
+<div class="section-header">
+  <div style="font-size:13px;color:var(--text2)">1 records</div>
+  <button class="btn btn-primary" onclick="openModal('addModal')">+ Add Ads Expense</button>
+</div>
+
+<!-- ── Expenses Table ── -->
+<div class="card" style="padding:0;overflow:hidden">
+  <div class="table-wrap mob-card-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th>Category</th><th>Client</th>
+          <th>Original Cost</th><th>LKR Amount</th><th>Markup</th><th>Total Billable</th><th>Approval</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+                  <tr>
+            <td data-label="Date" style="white-space:nowrap">16 Oct 2026</td>
+            <td data-label="Category">
+              <span style="font-weight:600">Facebook Ads</span>
+              <br><span style="font-size:12px;color:var(--accent);font-weight:500">Test Project</span>              <br><span style="font-size:11px;color:var(--text2)">Test desc</span>            </td>
+            <td data-label="Client">
+                              <span style="font-size:13px">Acme Corp</span>
+                          </td>
+            <td data-label="Original Cost">
+              <strong>USD 100.00</strong>
+            </td>
+            <td data-label="LKR Amount">
+                                              <span style="color:var(--text2)">Rs. 30,000.00</span>
+                <br><span style="font-size:10px;color:var(--text2)">@ 300.00 (locked)</span>
+                          </td>
+            <td data-label="Markup" style="color:var(--text2)">10%</td>
+            <td data-label="Billable"><strong style="color:var(--green)">Rs. 33,000.00</strong></td>
+            <td data-label="Approval">
+                                            <span class="badge badge-green">✅ Approved</span>
+                <br><span style="font-size:10px;color:var(--text2)">Admin</span>                          </td>
+            <td data-label="Status">
+              <select data-prev="pending" data-billing="client" onchange="handleStatusChange(this, 1, '2026-10')"
+                style="background:transparent;border:none;font-size:12px;font-weight:600;cursor:pointer;padding:3px 6px;border-radius:12px;
+                color:var(--yellow)">
+                <option value="pending"   selected>Pending</option>
+                <option value="invoiced"  >Invoiced</option>
+                <option value="paid"      >Paid</option>
+                <option value="cancelled" >Cancelled</option>
+              </select>
+            </td>
+            <td data-label=""><div class="mob-actions">
+                            <a href="?action=edit&id=1&month=2026-10" class="btn btn-ghost btn-sm">Edit</a>
+              <a href="?action=delete&id=1" class="btn btn-danger btn-sm" onclick="return confirmDelete('Delete this expense?')">Del</a>
+            </div></td>
+          </tr>
+              </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Mark as Paid Modal -->
+<style>
+/* Keep this one modal centered on all screen sizes, overriding the site-wide mobile bottom-sheet style */
+#markPaidModal { align-items: center !important; }
+#markPaidModal .modal { border-radius: 14px !important; max-height: 90vh !important; }
+</style>
+<div class="modal-overlay" id="markPaidModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <div class="modal-title">✓ Mark as Paid</div>
+      <button class="modal-close" onclick="cancelMarkPaid()">×</button>
+    </div>
+    <form method="POST" action="?action=mark_paid" enctype="multipart/form-data" id="markPaidForm" onsubmit="return validateMarkPaid()">
+      <input type="hidden" name="id" id="markPaidIdInput">
+      <input type="hidden" name="month" id="markPaidMonthInput">
+      <div class="modal-body">
+        <div class="form-group" style="margin-bottom:14px">
+          <label>Payment Date *</label>
+          <input type="date" name="payment_date" id="markPaidDate" required>
+        </div>
+        <div class="form-group" style="margin-bottom:14px">
+          <label>Payment Method</label>
+          <div style="display:flex;gap:16px;margin-top:6px">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+              <input type="radio" name="payment_method" value="bank_transfer" id="payMethodBank" checked onchange="toggleBankRefRequired()"> Bank Transfer
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;cursor:pointer;color:var(--text)">
+              <input type="radio" name="payment_method" value="not_bank_transfer" id="payMethodNotBank" onchange="toggleBankRefRequired()"> Not Bank Transfer
+            </label>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:14px" id="markPaidRefGroup">
+          <label id="markPaidRefLabel">Bank Reference Number *</label>
+          <input type="text" name="bank_reference" id="markPaidRef" placeholder="e.g. TXN123456789">
+        </div>
+        <div class="form-group" style="margin-bottom:16px" id="markPaidReceiptGroup">
+          <label>Payment Receipt (optional)</label>
+          <input type="file" name="payment_receipt" id="markPaidReceipt" accept=".pdf,.jpg,.jpeg,.png">
+          <span style="font-size:11px;color:var(--text2)">PDF, JPG or PNG</span>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button type="submit" class="btn btn-success" style="width:auto;padding:8px 20px">✓ Confirm Paid</button>
+          <button type="button" class="btn btn-ghost" style="width:auto;padding:8px 20px;background:var(--bg3);color:var(--text2)" onclick="cancelMarkPaid()">Cancel</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+let markPaidSelect = null;
+
+function handleStatusChange(sel, id, month) {
+    // Client-Paid expenses are settled directly by the client — no bank ref/receipt to collect,
+    // so skip the Mark as Paid popup entirely and just update the status like any other change.
+    if (sel.value === 'paid' && sel.dataset.billing !== 'client_paid') {
+        openMarkPaid(id, month, sel);
+    } else {
+        updateStatus(id, sel.value, month);
+    }
+}
+
+function openMarkPaid(id, month, selectEl) {
+    markPaidSelect = selectEl || null;
+    document.getElementById('markPaidIdInput').value = id;
+    document.getElementById('markPaidMonthInput').value = month;
+    document.getElementById('markPaidDate').value = new Date().toISOString().slice(0,10);
+    document.getElementById('markPaidRef').value = '';
+    document.getElementById('markPaidReceipt').value = '';
+    document.getElementById('payMethodBank').checked = true;
+    toggleBankRefRequired();
+    openModal('markPaidModal');
+}
+
+function toggleBankRefRequired() {
+    const notBank      = document.getElementById('payMethodNotBank').checked;
+    const refGroup     = document.getElementById('markPaidRefGroup');
+    const receiptGroup = document.getElementById('markPaidReceiptGroup');
+    refGroup.style.opacity = notBank ? '.5' : '1';
+    document.getElementById('markPaidRefLabel').textContent = notBank ? 'Bank Reference Number (optional)' : 'Bank Reference Number *';
+    receiptGroup.style.display = notBank ? 'none' : '';
+    if (notBank) document.getElementById('markPaidReceipt').value = '';
+}
+
+function validateMarkPaid() {
+    const notBank  = document.getElementById('payMethodNotBank').checked;
+    const refInput = document.getElementById('markPaidRef');
+    if (!notBank && !refInput.value.trim()) {
+        alert('Bank Reference Number is required for bank transfer payments.');
+        refInput.focus();
+        return false;
+    }
+    return true;
+}
+
+function cancelMarkPaid() {
+    if (markPaidSelect) markPaidSelect.value = markPaidSelect.dataset.prev;
+    closeModal('markPaidModal');
+}
+
+document.getElementById('markPaidModal').addEventListener('click', (e) => {
+    if (e.target.id === 'markPaidModal') cancelMarkPaid();
+});
+</script>
+
+
+<!-- ══ ADD MODAL ══ -->
+<div class="modal-overlay" id="addModal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <div class="modal-title">📢 Add Ads Expense</div>
+      <button class="modal-close" onclick="closeModal('addModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="?action=add" enctype="multipart/form-data">
+        <div class="form-grid">
+          <div class="form-group"><label>Expense Date *</label><input type="date" name="expense_date" required value="2026-10-16"></div>
+          <div class="form-group"><label>Billing Month *</label><input type="month" name="billing_month" required value="2026-10"></div>
+          <div class="form-group"><label>Expense Category *</label>
+            <select name="expense_category" required>
+              <option value="">— Select —</option>
+              <option value="Facebook Ads">Facebook Ads</option><option value="Instagram Ads">Instagram Ads</option><option value="Google Ads">Google Ads</option>            </select>
+          </div>
+          <div class="form-group"><label>Project / Work Name</label><input name="project_name" placeholder="e.g. BMW Engine Build"></div>
+          <div class="form-group"><label>Billing Type</label>
+            <select name="billing_type" id="addBillingType" onchange="toggleClient('add')">
+              <option value="client" selected>Client Expense (We Pay)</option>
+              <option value="shared">Shared (Multiple Clients)</option>
+              <option value="client_paid">💳 Client-Paid (Client Pays Directly)</option>
+            </select>
+            <span style="font-size:11px;color:var(--text2)">Internal company costs aren't ad campaigns — log those on the Expenses page instead.</span>
+          </div>
+          <div id="addClientPaidNotice" style="display:none;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.3);border-radius:8px;padding:10px 14px;font-size:12.5px;color:#a855f7;grid-column:1/-1">
+            💳 <strong>Client-Paid Expense</strong> — This cost was paid directly by the client. It will be recorded for reporting purposes only and <strong>excluded from your company's expense totals</strong>.
+          </div>
+          <div class="form-group" id="addClientField"><label>Client *</label>
+                          <select name="client_id" id="addClientId" onchange="syncClientName('add')">
+                <option value="">— Select Client —</option>
+                <option value="1" data-name="Acme Corp">Acme Corp</option>              </select>
+              <input type="hidden" name="client_name" id="addClientName">
+                      </div>
+          <div class="form-group"><label>Cost Amount *</label><input type="number" name="cost_amount" id="addCost" step="0.01" required placeholder="0.00" oninput="calcTotal('add')"></div>
+          <div class="form-group"><label>Currency</label>
+            <select name="currency" id="addCurrency" onchange="calcTotal('add')">
+                              <option value="LKR"  data-rate="1">LKR</option>
+                              <option value="USD" selected data-rate="300">USD (Rs.300)</option>
+                              <option value="EUR"  data-rate="330">EUR (Rs.330)</option>
+                              <option value="GBP"  data-rate="400">GBP (Rs.400)</option>
+                              <option value="AUD"  data-rate="210">AUD (Rs.210)</option>
+                              <option value="SGD"  data-rate="230">SGD (Rs.230)</option>
+                          </select>
+            <span style="font-size:11px;color:var(--text2)">Rate is locked at entry time. <a href="https://business.creativelements.co/settings.php#rates" style="color:var(--accent)" target="_blank">Update rates →</a></span>
+          </div>
+          <div class="form-group" id="addLkrBox" style="display:none">
+            <label>LKR Equivalent</label>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;font-weight:600;color:var(--text2)" id="addLkrVal">—</div>
+            <span style="font-size:11px;color:var(--text2)" id="addRateLabel"></span>
+          </div>
+          <div class="form-group"><label>Markup % (optional)</label><input type="number" name="markup_percentage" id="addMarkup" step="0.01" value="0" placeholder="0" oninput="calcTotal('add')"></div>
+          <div class="form-group"><label>Additional Service Fee</label><input type="number" name="additional_fee" id="addFee" step="0.01" value="0" placeholder="0.00" oninput="calcTotal('add')"></div>
+          <div class="form-group full">
+            <label>Total Billable Amount (Auto Calculated — in LKR)</label>
+            <div style="background:var(--bg3);border:2px solid var(--green);border-radius:8px;padding:10px 14px;font-size:20px;font-weight:800;color:var(--green)" id="addTotal">0.00</div>
+            <input type="hidden" name="total_billable" id="addTotalHidden" value="0">
+          </div>
+          <div class="form-group full"><label>Description</label><textarea name="description" rows="2" placeholder="Brief description of the expense..."></textarea></div>
+          <div class="form-group"><label>Status</label>
+            <select name="status">
+              <option value="pending">Pending</option>
+              <option value="invoiced">Invoiced</option>
+              <option value="paid">Paid</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Receipt (PDF)</label><input type="file" name="receipt" accept="application/pdf"></div>
+          <div class="form-group full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Internal notes..."></textarea></div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save Expense</button>
+          <button type="button" class="btn btn-ghost" onclick="closeModal('addModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
