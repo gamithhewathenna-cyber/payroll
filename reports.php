@@ -57,10 +57,21 @@ $freelanceLinks = $db->query("
 $freelanceByInvoice = [];
 foreach ($freelanceLinks as $fl) { $freelanceByInvoice[$fl['client_invoice_id']][] = $fl; }
 
-$invTotalSum = $freelanceCostSum = 0;
+// Bank Transfer expenses can now be linked to a client invoice too (expenses.php) —
+// same profitability idea as freelance cost, so both count toward the cost side here.
+$expenseLinks = $db->query("
+    SELECT ei.client_invoice_id, e.expense_category, e.project_name, e.total_billable, e.status
+    FROM expense_invoices ei
+    JOIN expenses e ON e.id = ei.expense_id
+")->fetchAll();
+$expenseByInvoice = [];
+foreach ($expenseLinks as $el) { $expenseByInvoice[$el['client_invoice_id']][] = $el; }
+
+$invTotalSum = $freelanceCostSum = $expenseCostSum = 0;
 foreach ($invoiceCostReport as $row) {
     $invTotalSum += $row['total'];
     foreach (($freelanceByInvoice[$row['id']] ?? []) as $fl) { $freelanceCostSum += $fl['payment_amount']; }
+    foreach (($expenseByInvoice[$row['id']] ?? []) as $el) { $expenseCostSum += $el['total_billable']; }
 }
 
 pageHeader('Reports');
@@ -188,17 +199,19 @@ pageHeader('Reports');
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">
     <div class="stat-card blue"><div class="stat-label">Total Invoiced</div><div class="stat-value" style="font-size:18px"><?= formatMoney($invTotalSum) ?></div></div>
     <div class="stat-card red"><div class="stat-label">Freelance Cost</div><div class="stat-value" style="font-size:18px"><?= formatMoney($freelanceCostSum) ?></div></div>
-    <div class="stat-card green"><div class="stat-label">Margin</div><div class="stat-value" style="font-size:18px"><?= formatMoney($invTotalSum - $freelanceCostSum) ?></div></div>
+    <div class="stat-card red"><div class="stat-label">Expense Cost</div><div class="stat-value" style="font-size:18px"><?= formatMoney($expenseCostSum) ?></div></div>
+    <div class="stat-card green"><div class="stat-label">Margin</div><div class="stat-value" style="font-size:18px"><?= formatMoney($invTotalSum - $freelanceCostSum - $expenseCostSum) ?></div></div>
   </div>
   <div class="table-wrap mob-card-table">
     <table>
-      <thead><tr><th>Invoice #</th><th>Client</th><th>Invoice Total</th><th>Status</th><th>Freelance Cost</th><th>Margin</th></tr></thead>
+      <thead><tr><th>Invoice #</th><th>Client</th><th>Invoice Total</th><th>Status</th><th>Linked Costs (Freelance + Expense)</th><th>Margin</th></tr></thead>
       <tbody>
         <?php if (empty($invoiceCostReport)): ?>
           <tr><td colspan="6" style="text-align:center;color:var(--text2);padding:20px">No invoices for <?= date('F Y', strtotime($filterMonth.'-01')) ?>.</td></tr>
         <?php else: $invStatusColors = ['draft'=>'yellow','sent'=>'blue','paid'=>'green','overdue'=>'red','cancelled'=>'red']; foreach ($invoiceCostReport as $row):
-          $links  = $freelanceByInvoice[$row['id']] ?? [];
-          $cost   = array_sum(array_column($links, 'payment_amount'));
+          $flLinks = $freelanceByInvoice[$row['id']] ?? [];
+          $expLinks = $expenseByInvoice[$row['id']] ?? [];
+          $cost   = array_sum(array_column($flLinks, 'payment_amount')) + array_sum(array_column($expLinks, 'total_billable'));
           $margin = $row['total'] - $cost;
         ?>
           <tr>
@@ -207,12 +220,15 @@ pageHeader('Reports');
             <td><strong><?= formatMoney($row['total']) ?></strong></td>
             <td><span class="badge badge-<?= $invStatusColors[$row['status']] ?? 'blue' ?>"><?= ucfirst($row['status']) ?></span></td>
             <td>
-              <?php if (empty($links)): ?>
+              <?php if (empty($flLinks) && empty($expLinks)): ?>
                 <span style="color:var(--text2)">—</span>
               <?php else: ?>
                 <strong style="color:var(--red)"><?= formatMoney($cost) ?></strong>
-                <?php foreach ($links as $fl): ?>
-                  <div style="font-size:11px;color:var(--text2)"><?= h($fl['freelancer_name']) ?> — <?= h($fl['project_name']) ?> (<?= formatMoney($fl['payment_amount']) ?><?= $fl['payment_status']!=='paid' ? ', pending' : '' ?>)</div>
+                <?php foreach ($flLinks as $fl): ?>
+                  <div style="font-size:11px;color:var(--text2)">🧑‍💻 <?= h($fl['freelancer_name']) ?> — <?= h($fl['project_name']) ?> (<?= formatMoney($fl['payment_amount']) ?><?= $fl['payment_status']!=='paid' ? ', pending' : '' ?>)</div>
+                <?php endforeach; ?>
+                <?php foreach ($expLinks as $el): ?>
+                  <div style="font-size:11px;color:var(--text2)">🏦 <?= h($el['expense_category']) ?><?= $el['project_name'] ? ' — '.h($el['project_name']) : '' ?> (<?= formatMoney($el['total_billable']) ?><?= $el['status']!=='paid' ? ', '.h($el['status']) : '' ?>)</div>
                 <?php endforeach; ?>
               <?php endif; ?>
             </td>
