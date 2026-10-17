@@ -139,6 +139,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add') {
         $db->prepare("INSERT INTO expenses (expense_date,billing_month,client_name,billing_type,record_type,expense_category,project_name,description,cost_amount,currency,exchange_rate,markup_percentage,additional_fee,total_billable,status,notes,receipt_path,created_by,approval_status,approved_by,approved_at,payment_date,payment_method,bank_reference,payment_receipt_path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,NOW(),?,?,?,?)")
            ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$recordType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$status,trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$_SESSION['full_name'],$paymentDate,$paymentMethod,$bankRef,$paymentReceiptPath]);
+        $newExpenseId = (int)$db->lastInsertId();
+        $invoiceIds = array_filter(array_map('intval', $d['client_invoice_ids'] ?? []));
+        foreach (array_unique($invoiceIds) as $invId) {
+            $db->prepare("INSERT INTO expense_invoices (expense_id, client_invoice_id) VALUES (?,?)")->execute([$newExpenseId, $invId]);
+        }
         setFlash('success', $recordType === 'bank_transfer' ? '🏦 Bank transfer recorded.' : '🏦 Expense recorded as paid via bank transfer.');
     } elseif ($action === 'edit') {
         $stmt = $db->prepare("SELECT exchange_rate, currency FROM expenses WHERE id=?");
@@ -151,6 +156,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $db->prepare("UPDATE expenses SET expense_date=?,billing_month=?,client_name=?,billing_type=?,expense_category=?,project_name=?,description=?,cost_amount=?,currency=?,exchange_rate=?,markup_percentage=?,additional_fee=?,total_billable=?,status=?,notes=?,receipt_path=?,approved_by=?,approved_at=NOW() WHERE id=?")
            ->execute([$d['expense_date'],$d['billing_month'],$clientName,$billingType,$d['expense_category'],trim($d['project_name']??''),trim($d['description']??''),$cost,$currency,$exRate,$markup,$addFee,$total,$d['status']??'pending',trim($d['notes']??''),$receiptPath,$_SESSION['full_name'],$id]);
+        $invoiceIds = array_filter(array_map('intval', $d['client_invoice_ids'] ?? []));
+        $db->prepare("DELETE FROM expense_invoices WHERE expense_id=?")->execute([$id]);
+        foreach (array_unique($invoiceIds) as $invId) {
+            $db->prepare("INSERT INTO expense_invoices (expense_id, client_invoice_id) VALUES (?,?)")->execute([$id, $invId]);
+        }
         setFlash('success', 'Expense updated.');
     }
     header('Location: ' . SITE_URL . '/expenses.php?month=' . ($d['billing_month'] ?? date('Y-m'))); exit;
@@ -203,7 +213,25 @@ if ($action === 'edit' && $id) {
 // Load registered clients
 $clients = $db->query("SELECT id, company_name FROM clients WHERE status='active' ORDER BY company_name")->fetchAll();
 
-$categories = ['Facebook Ads','Instagram Ads','Google Ads','TikTok Ads','ChatGPT','Canva','Adobe Creative Cloud','Google Workspace','Hosting','Domain Renewals','Freelancer Costs','Printing','Software Subscription','Other'];
+// Client invoices, for linking an expense to the project/invoice it was incurred for
+$clientInvoices = $db->query("
+    SELECT i.id, i.invoice_number, i.total, i.status, i.billing_month, c.company_name
+    FROM invoices i JOIN clients c ON c.id = i.client_id
+    WHERE i.invoice_type = 'invoice'
+    ORDER BY i.issue_date DESC
+")->fetchAll();
+
+// Linked client invoices/projects per expense (an expense can cover several)
+$expenseInvoiceLinks = [];
+$expLinkRows = $db->query("
+    SELECT ei.expense_id, ei.client_invoice_id, i.invoice_number, c.company_name
+    FROM expense_invoices ei
+    JOIN invoices i ON i.id = ei.client_invoice_id
+    JOIN clients c ON c.id = i.client_id
+")->fetchAll();
+foreach ($expLinkRows as $lr) { $expenseInvoiceLinks[$lr['expense_id']][] = $lr; }
+
+$categories =['Facebook Ads','Instagram Ads','Google Ads','TikTok Ads','ChatGPT','Canva','Adobe Creative Cloud','Google Workspace','Hosting','Domain Renewals','Freelancer Costs','Printing','Software Subscription','Other'];
 $currencies  = ['LKR','USD','EUR','GBP','AUD','SGD'];
 $rates = [
     'LKR' => 1,
@@ -336,6 +364,9 @@ pageHeader('Expenses & Client Rebilling');
               <?php else: ?>
                 <span style="font-size:13px"><?= h($e['client_name']) ?: '—' ?></span>
               <?php endif; ?>
+              <?php foreach (($expenseInvoiceLinks[$e['id']] ?? []) as $link): ?>
+                <br><a href="<?= SITE_URL ?>/invoice_form.php?id=<?= (int)$link['client_invoice_id'] ?>" style="font-size:11px;color:var(--accent)" title="Linked client invoice">🔗 <?= h($link['invoice_number']) ?></a>
+              <?php endforeach; ?>
             </td>
             <td data-label="Original Cost">
               <strong><?= $e['currency'] !== 'LKR' ? h($e['currency']).' '.number_format($e['cost_amount'],2) : formatMoney($e['cost_amount']) ?></strong>
@@ -658,6 +689,24 @@ function togglePrCustomRange() {
               <input type="hidden" name="client_name" id="addClientName">
             <?php endif; ?>
           </div>
+          <div class="form-group full" id="addInvoiceLinkField">
+            <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <input type="text" id="addInvoiceSearch" oninput="filterInvoiceList('addInvoice')" placeholder="🔎 Search client name or invoice #..." style="flex:1">
+              <input type="month" id="addInvoiceMonth" onchange="filterInvoiceList('addInvoice')" style="width:150px">
+            </div>
+            <div id="addInvoiceList" style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
+              <?php if (empty($clientInvoices)): ?>
+                <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
+              <?php else: foreach ($clientInvoices as $ci): ?>
+                <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" data-search="<?= h(mb_strtolower($ci['company_name'].' '.$ci['invoice_number'])) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+                  <input type="checkbox" name="client_invoice_ids[]" value="<?= $ci['id'] ?>" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
+                  <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
+                </label>
+              <?php endforeach; endif; ?>
+              <div class="invoiceNoMatch" style="display:none;font-size:12px;color:var(--text2)">No matching invoices.</div>
+            </div>
+          </div>
           <div class="form-group"><label>Cost Amount *</label><input type="number" name="cost_amount" id="addCost" step="0.01" required placeholder="0.00" oninput="calcTotal('add')"></div>
           <div class="form-group"><label>Currency</label>
             <select name="currency" id="addCurrency" onchange="calcTotal('add')">
@@ -739,6 +788,25 @@ function togglePrCustomRange() {
           <div class="form-group" id="editClientField" style="<?= $editRow['billing_type']==='internal'?'display:none':'' ?>">
             <label>Client Name</label><input name="client_name" value="<?= h($editRow['client_name']) ?>">
           </div>
+          <div class="form-group full" id="editInvoiceLinkField" style="<?= $editRow['billing_type']==='internal'?'display:none':'' ?>">
+            <label>Client Invoice(s) / Project <span style="color:var(--text2);font-weight:400">(optional — select any that apply)</span></label>
+            <?php $editLinkedIds = array_column($expenseInvoiceLinks[$editRow['id']] ?? [], 'client_invoice_id'); ?>
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <input type="text" id="editInvoiceSearch" oninput="filterInvoiceList('editInvoice')" placeholder="🔎 Search client name or invoice #..." style="flex:1">
+              <input type="month" id="editInvoiceMonth" value="<?= h($editRow['billing_month']) ?>" onchange="filterInvoiceList('editInvoice')" style="width:150px">
+            </div>
+            <div id="editInvoiceList" style="max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
+              <?php if (empty($clientInvoices)): ?>
+                <span style="font-size:12px;color:var(--text2)">No client invoices yet.</span>
+              <?php else: foreach ($clientInvoices as $ci): ?>
+                <label class="invoiceRow" data-month="<?= h($ci['billing_month']) ?>" data-search="<?= h(mb_strtolower($ci['company_name'].' '.$ci['invoice_number'])) ?>" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:12.5px;font-weight:400;padding:4px 0">
+                  <input type="checkbox" name="client_invoice_ids[]" value="<?= $ci['id'] ?>" <?= in_array((int)$ci['id'], $editLinkedIds, true) ? 'checked' : '' ?> style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
+                  <?= h($ci['invoice_number']) ?> — <?= h($ci['company_name']) ?> (<?= formatMoney($ci['total']) ?>, <?= ucfirst($ci['status']) ?>)
+                </label>
+              <?php endforeach; endif; ?>
+              <div class="invoiceNoMatch" style="display:none;font-size:12px;color:var(--text2)">No matching invoices.</div>
+            </div>
+          </div>
           <div class="form-group"><label>Cost Amount *</label><input type="number" name="cost_amount" id="editCost" step="0.01" required value="<?= h($editRow['cost_amount']) ?>" oninput="calcTotal('edit')"></div>
           <div class="form-group"><label>Currency</label>
             <select name="currency" id="editCurrency" onchange="calcTotal('edit')">
@@ -805,13 +873,37 @@ function toggleClient(prefix) {
     const type  = document.getElementById(prefix + 'BillingType').value;
     const field = document.getElementById(prefix + 'ClientField');
     if (field) field.style.display = type === 'internal' ? 'none' : '';
+    // Invoice linking only makes sense once a client is actually selected
+    const invoiceField = document.getElementById(prefix + 'InvoiceLinkField');
+    if (invoiceField) invoiceField.style.display = type === 'internal' ? 'none' : '';
     // Show client-paid notice
     const notice = document.getElementById(prefix + 'ClientPaidNotice');
     if (notice) notice.style.display = type === 'client_paid' ? 'block' : 'none';
 }
 
+function filterInvoiceList(prefix) {
+    const month  = document.getElementById(prefix + 'Month').value;
+    const searchEl = document.getElementById(prefix + 'Search');
+    const search = searchEl ? searchEl.value.trim().toLowerCase() : '';
+    const list = document.getElementById(prefix + 'List');
+    let visible = 0;
+    list.querySelectorAll('.invoiceRow').forEach(row => {
+        const monthOk  = !month || row.dataset.month === month;
+        const searchOk = !search || row.dataset.search.includes(search);
+        const show = monthOk && searchOk;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    const noMatch = list.querySelector('.invoiceNoMatch');
+    if (noMatch) noMatch.style.display = (visible === 0) ? '' : 'none';
+}
+
 function openAddModal() {
     toggleRecordType('add');
+    document.querySelectorAll('#addInvoiceList .invoiceRow input[type=checkbox]').forEach(cb => cb.checked = false);
+    document.getElementById('addInvoiceSearch').value = '';
+    document.getElementById('addInvoiceMonth').value = '<?= h($filterMonth) ?>';
+    filterInvoiceList('addInvoice');
     openModal('addModal');
 }
 
@@ -836,6 +928,8 @@ function toggleRecordType(prefix) {
     });
     const clientField = document.getElementById(prefix + 'ClientField');
     if (clientField) clientField.style.display = isPureBankTransfer ? 'none' : '';
+    const invoiceLinkField = document.getElementById(prefix + 'InvoiceLinkField');
+    if (invoiceLinkField) invoiceLinkField.style.display = isPureBankTransfer ? 'none' : '';
     if (isPureBankTransfer) {
         const notice = document.getElementById(prefix + 'ClientPaidNotice');
         if (notice) notice.style.display = 'none';
@@ -910,6 +1004,9 @@ function updateStatus(id, status, month) {
 document.addEventListener('DOMContentLoaded', () => {
     const ec = document.getElementById('editCost');
     if (ec) calcTotal('edit');
+    if (document.getElementById('editInvoiceMonth')) {
+        filterInvoiceList('editInvoice');
+    }
 });
 </script>
 
