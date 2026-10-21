@@ -203,7 +203,7 @@ if ($action === 'edit' && $id) {
 // Load registered clients
 $clients = $db->query("SELECT id, company_name FROM clients WHERE status='active' ORDER BY company_name")->fetchAll();
 
-$categories = ['Facebook Ads','Instagram Ads','Google Ads','TikTok Ads','ChatGPT','Canva','Adobe Creative Cloud','Google Workspace','Hosting','Domain Renewals','Freelancer Costs','Printing','Software Subscription','Other'];
+$categories = ['Meta Ads','Google Ads','TikTok Ads','ChatGPT','Canva','Adobe Creative Cloud','Google Workspace','Hosting','Domain Renewals','Freelancer Costs','Printing','Software Subscription','Electricity Bills','Water Bills','Internet Bills','Mobile Bills','Food','Transport','Other'];
 $currencies  = ['LKR','USD','EUR','GBP','AUD','SGD'];
 $rates = [
     'LKR' => 1,

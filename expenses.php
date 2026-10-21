@@ -231,7 +231,7 @@ $expLinkRows = $db->query("
 ")->fetchAll();
 foreach ($expLinkRows as $lr) { $expenseInvoiceLinks[$lr['expense_id']][] = $lr; }
 
-$categories =['Facebook Ads','Instagram Ads','Google Ads','TikTok Ads','ChatGPT','Canva','Adobe Creative Cloud','Google Workspace','Hosting','Domain Renewals','Freelancer Costs','Printing','Software Subscription','Other'];
+$categories =['Meta Ads','Google Ads','TikTok Ads','ChatGPT','Canva','Adobe Creative Cloud','Google Workspace','Hosting','Domain Renewals','Freelancer Costs','Printing','Software Subscription','Electricity Bills','Water Bills','Internet Bills','Mobile Bills','Food','Transport','Other'];
 $currencies  = ['LKR','USD','EUR','GBP','AUD','SGD'];
 $rates = [
     'LKR' => 1,
