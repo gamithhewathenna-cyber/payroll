@@ -98,12 +98,36 @@ foreach ($expenseRows as $r) {
     ];
 }
 
+// ── Payroll payments (paid) ──────────────────────────────────
+// Employee salary payments, same "paid" convention as Freelance/Expenses above.
+$pWhere  = ["p.payment_status = 'paid'"];
+$pParams = [];
+if ($dateFrom && $dateTo) { $pWhere[] = "p.payment_date BETWEEN ? AND ?"; $pParams[] = $dateFrom; $pParams[] = $dateTo; }
+$payrollRows = $db->prepare("SELECT p.id, p.payment_date, p.final_salary, e.full_name, e.employee_id AS emp_code
+    FROM payroll p JOIN employees e ON e.id = p.employee_id
+    WHERE " . implode(' AND ', $pWhere) . " ORDER BY p.payment_date DESC");
+$payrollRows->execute($pParams);
+$payrollRows = $payrollRows->fetchAll();
+
+foreach ($payrollRows as $r) {
+    $transactions[] = [
+        'date'           => $r['payment_date'],
+        'type'           => 'Payroll',
+        'details'        => $r['full_name'] . ' (' . $r['emp_code'] . ')',
+        'amount'         => (float)$r['final_salary'],
+        'bank_reference' => null,
+        'file_path'      => 'payslips.php?id=' . $r['id'],
+        'file_label'     => 'Payslip',
+    ];
+}
+
 // Merge, newest first (rows with no payment date recorded sort last)
 usort($transactions, fn($a, $b) => strcmp($b['date'] ?? '', $a['date'] ?? ''));
 
 $totalAmount     = array_sum(array_column($transactions, 'amount'));
 $freelanceTotal  = array_sum(array_column($freelanceRows, 'payment_amount'));
 $expenseTotal    = array_sum(array_column($expenseRows, 'total_billable'));
+$payrollTotal    = array_sum(array_column($payrollRows, 'final_salary'));
 
 // Year options for the yearly picker — from the earliest transaction year to this year
 $earliestYear = (int)date('Y');
@@ -147,7 +171,8 @@ pageHeader('Transactions');
   <div class="stat-card"><div class="stat-label">Total Transactions</div><div class="stat-value"><?= count($transactions) ?></div><div class="stat-sub"><?= h($periodLabel) ?></div></div>
   <div class="stat-card blue"><div class="stat-label">🧑‍💻 Freelance Paid</div><div class="stat-value" style="font-size:18px"><?= h($sym) ?> <?= number_format($freelanceTotal,2) ?></div><div class="stat-sub"><?= count($freelanceRows) ?> transactions</div></div>
   <div class="stat-card yellow"><div class="stat-label">🧾 Expenses Paid</div><div class="stat-value" style="font-size:18px"><?= h($sym) ?> <?= number_format($expenseTotal,2) ?></div><div class="stat-sub"><?= count($expenseRows) ?> transactions</div></div>
-  <div class="stat-card green"><div class="stat-label">Combined Total</div><div class="stat-value" style="font-size:18px"><?= h($sym) ?> <?= number_format($totalAmount,2) ?></div><div class="stat-sub">Freelance + Expenses</div></div>
+  <div class="stat-card" style="border-color:rgba(168,85,247,.3)"><div class="stat-label" style="color:#a855f7">👤 Payroll Paid</div><div class="stat-value" style="font-size:18px"><?= h($sym) ?> <?= number_format($payrollTotal,2) ?></div><div class="stat-sub"><?= count($payrollRows) ?> transactions</div></div>
+  <div class="stat-card green"><div class="stat-label">Combined Total</div><div class="stat-value" style="font-size:18px"><?= h($sym) ?> <?= number_format($totalAmount,2) ?></div><div class="stat-sub">Freelance + Expenses + Payroll</div></div>
 </div>
 
 <!-- Filter -->
@@ -217,6 +242,8 @@ pageHeader('Transactions');
             <td data-label="Type">
               <?php if ($t['type'] === 'Freelance'): ?>
                 <span class="badge badge-blue">🧑‍💻 Freelance</span>
+              <?php elseif ($t['type'] === 'Payroll'): ?>
+                <span class="badge" style="background:rgba(168,85,247,.15);color:#a855f7">👤 Payroll</span>
               <?php else: ?>
                 <span class="badge badge-yellow">🧾 Expense</span>
               <?php endif; ?>
