@@ -3,10 +3,7 @@ require_once 'config.php';
 require_once 'includes/layout.php';
 requireAdmin();
 $db = getDB();
-
-function saveSetting($db, $key, $val) {
-    $db->prepare("INSERT INTO settings (setting_key,setting_value) VALUES (?,?) ON DUPLICATE KEY UPDATE setting_value=?")->execute([$key,$val,$val]);
-}
+require_once 'includes/backup.php';
 
 // Load all settings
 $rows = $db->query("SELECT setting_key,setting_value FROM settings")->fetchAll();
@@ -73,6 +70,24 @@ if ($action === 'approval_reminders') {
     header('Location: '.SITE_URL.'/settings.php#ai'); exit;
 }
 
+if ($action === 'backup_settings') {
+    saveSetting($db, 'auto_backup_enabled', isset($_POST['auto_backup_enabled']) ? '1' : '0');
+    clearSettingsCache();
+    setFlash('success', 'Backup settings saved.');
+    header('Location: '.SITE_URL.'/settings.php#backup'); exit;
+}
+
+if ($action === 'run_backup') {
+    try {
+        runSystemBackup($db);
+        clearSettingsCache();
+        setFlash('success', '✅ Backup completed successfully.');
+    } catch (Exception $e) {
+        setFlash('error', '❌ Backup failed: ' . $e->getMessage());
+    }
+    header('Location: '.SITE_URL.'/settings.php#backup'); exit;
+}
+
 if ($action === 'logo') {
     if (!empty($_FILES['logo']['name'])) {
         $ext = strtolower(pathinfo($_FILES['logo']['name'], PATHINFO_EXTENSION));
@@ -115,6 +130,7 @@ pageHeader('Settings');
   <a href="#logo">🖼 Logo</a>
   <a href="#ai">🤖 AI Assistant</a>
   <a href="#approval-reminders">🔔 Approvals</a>
+  <a href="#backup">💾 Backup</a>
 </div>
 
 <!-- ── COMPANY INFO ─────────────────────────────────────── -->
@@ -291,6 +307,57 @@ pageHeader('Settings');
     </div>
     <div class="form-actions"><button type="submit" class="btn btn-primary">Save Reminder Settings</button></div>
   </form>
+</div>
+
+<!-- ── BACKUP ───────────────────────────────────────────── -->
+<?php $backups = listBackups(); ?>
+<div class="card settings-section" id="backup">
+  <div class="card-title">💾 System Backup</div>
+  <p style="font-size:13px;color:var(--text2);margin-bottom:16px">A full backup (database + every uploaded invoice/receipt file) is taken automatically once a week, the next time an admin opens the system after 7 days have passed. The last <?= BACKUP_KEEP ?> backups are kept; older ones are removed automatically.</p>
+
+  <form method="POST" style="margin-bottom:16px">
+    <input type="hidden" name="action" value="backup_settings">
+    <div class="form-group full" style="margin-bottom:12px">
+      <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" name="auto_backup_enabled" <?= ($s['auto_backup_enabled']??'1')==='1'?'checked':'' ?> style="width:16px;height:16px">
+        Automatically back up the entire system once a week
+      </label>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Save Backup Settings</button></div>
+  </form>
+
+  <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px">
+    <?php if (!empty($s['last_backup_at'])): ?>
+      Last backup: <strong><?= date('d M Y, H:i', strtotime($s['last_backup_at'])) ?></strong>
+      <?php if (!empty($s['last_backup_size'])): ?> (<?= number_format($s['last_backup_size']/1024/1024, 2) ?> MB)<?php endif; ?>
+    <?php else: ?>
+      <span style="color:var(--yellow)">No backup has been taken yet.</span>
+    <?php endif; ?>
+  </div>
+
+  <form method="POST" style="margin-bottom:20px">
+    <input type="hidden" name="action" value="run_backup">
+    <button type="submit" class="btn btn-primary" onclick="return confirm('Run a full system backup now? This may take a moment.')">▶ Run Backup Now</button>
+  </form>
+
+  <div class="card-title" style="font-size:14px">Available Backups</div>
+  <div class="table-wrap mob-card-table">
+    <table>
+      <thead><tr><th>File</th><th>Date</th><th>Size</th><th>Download</th></tr></thead>
+      <tbody>
+        <?php if (empty($backups)): ?>
+          <tr><td colspan="4" style="text-align:center;color:var(--text2);padding:20px">No backups yet.</td></tr>
+        <?php else: foreach ($backups as $b): ?>
+          <tr>
+            <td style="font-family:monospace;font-size:12px"><?= h($b['name']) ?></td>
+            <td style="font-size:12px;color:var(--text2)"><?= date('d M Y, H:i', $b['date']) ?></td>
+            <td style="font-size:12px;color:var(--text2)"><?= number_format($b['size']/1024/1024, 2) ?> MB</td>
+            <td><a href="<?= SITE_URL ?>/backup_download.php?file=<?= urlencode($b['name']) ?>" class="btn btn-ghost btn-sm">⬇️ Download</a></td>
+          </tr>
+        <?php endforeach; endif; ?>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <?php pageFooter(); ?>

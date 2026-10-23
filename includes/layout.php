@@ -1,6 +1,7 @@
 <?php
 // includes/layout.php — CSS & JS fully embedded, no external file dependencies
 require_once __DIR__ . '/vendor_approval.php';
+require_once __DIR__ . '/backup.php';
 
 function getInlineStyles() {
     return <<<'CSS'
@@ -774,6 +775,7 @@ function pageFooter() {
 
     if (isAdmin() && basename($_SERVER['SCRIPT_NAME'] ?? '') !== 'chat.php') {
         $db          = getDB();
+        maybeRunAutoBackup($db); // no-op unless a week has passed since the last backup
         $pending     = getPendingApprovals($db);
         $count       = count($pending);
         $pendingJson = json_encode($pending);

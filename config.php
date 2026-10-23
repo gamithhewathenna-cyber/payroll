@@ -149,6 +149,10 @@ function getSetting($key, $default = '') {
     return $_SESSION['settings'][$key] ?? $default;
 }
 
+function saveSetting($db, $key, $val) {
+    $db->prepare("INSERT INTO settings (setting_key,setting_value) VALUES (?,?) ON DUPLICATE KEY UPDATE setting_value=?")->execute([$key,$val,$val]);
+}
+
 function clearSettingsCache() {
     unset($_SESSION['settings']);
 }
