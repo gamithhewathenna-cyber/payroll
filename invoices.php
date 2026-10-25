@@ -549,6 +549,15 @@ $activeRange = $dateRange;
             <td data-label="Due" style="font-size:12px;color:<?= $isOverdue?'var(--red)':'var(--text2)' ?>"><?= $inv['due_date'] ? date('d M Y',strtotime($inv['due_date'])) : '—' ?></td>
             <?php endif; ?>
             <td data-label="Total"><strong style="color:var(--green)"><?= $sym ?> <?= number_format($inv['total'],2) ?></strong>
+              <?php
+                $rowCur = $inv['inv_currency'] ?? 'LKR';
+                $rowRate = (float)($inv['inv_rate'] ?? 1) ?: 1;
+                $rowForeign = $rowCur !== 'LKR';
+                $rowCurSymbols = ['USD'=>'$','AUD'=>'A$','EUR'=>'€','GBP'=>'£','SGD'=>'S$'];
+              ?>
+              <?php if ($rowForeign): ?>
+              <div style="font-size:11px;color:var(--accent)"><?= h($rowCurSymbols[$rowCur] ?? $rowCur) ?> <?= number_format($inv['total']/$rowRate,2) ?> <span style="color:var(--text2)">@ <?= number_format($rowRate,2) ?></span></div>
+              <?php endif; ?>
               <?php if (($inv['advance_amount']??0) > 0): ?>
               <div style="font-size:11px;color:var(--yellow)">Advance: <?= $sym ?> <?= number_format($inv['advance_amount'],2) ?></div>
               <?php endif; ?>
