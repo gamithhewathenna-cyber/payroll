@@ -74,6 +74,29 @@ foreach ($invoiceCostReport as $row) {
     foreach (($expenseByInvoice[$row['id']] ?? []) as $el) { $expenseCostSum += $el['total_billable']; }
 }
 
+// Yearly Trend — Revenue / Expenses / Profit per month, same conventions as the Dashboard
+// (Revenue: invoices by issue month, excluding cancelled. Expenses: company costs by billing_month).
+$filterYear = (int)($_GET['year'] ?? date('Y'));
+$trendMonths = [];
+$trendRevenue = []; $trendExpenses = []; $trendProfit = [];
+for ($m = 1; $m <= 12; $m++) {
+    $ym = sprintf('%04d-%02d', $filterYear, $m);
+    $trendMonths[] = date('M', mktime(0,0,0,$m,1,$filterYear));
+
+    $rev = $db->prepare("SELECT COALESCE(SUM(total),0) FROM invoices WHERE DATE_FORMAT(issue_date,'%Y-%m')=? AND invoice_type='invoice' AND status != 'cancelled'");
+    $rev->execute([$ym]);
+    $revVal = (float)$rev->fetchColumn();
+
+    $exp = $db->prepare("SELECT COALESCE(SUM(cost_amount * exchange_rate),0) FROM expenses WHERE billing_month=? AND billing_type IN ('internal','client','shared') AND record_type != 'bank_transfer'");
+    $exp->execute([$ym]);
+    $expVal = (float)$exp->fetchColumn();
+
+    $trendRevenue[]  = $revVal;
+    $trendExpenses[] = $expVal;
+    $trendProfit[]   = $revVal - $expVal;
+}
+$trendYearOptions = range((int)date('Y'), (int)date('Y') - 4);
+
 pageHeader('Reports');
 ?>
 
@@ -102,6 +125,7 @@ pageHeader('Reports');
   <a href="?tab=commissions&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='commissions'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">📈 Commissions</a>
   <a href="?tab=allowances&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='allowances'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">🎁 Allowances</a>
   <a href="?tab=invoice_cost&month=<?= $filterMonth ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='invoice_cost'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">💼 Invoice &amp; Freelance Cost</a>
+  <a href="?tab=trend&year=<?= $filterYear ?>" style="padding:10px 18px;border-radius:8px 8px 0 0;text-decoration:none;font-weight:600;font-size:13.5px;<?= $tab==='trend'?'background:var(--accent);color:#fff':'background:var(--bg3);color:var(--text2)' ?>">📊 Yearly Trend</a>
 </div>
 
 <?php if ($tab === 'payroll'): ?>
@@ -239,6 +263,203 @@ pageHeader('Reports');
     </table>
   </div>
 </div>
+<?php endif; ?>
+
+<?php if ($tab === 'trend'):
+    // Chart colors are a validated dark-surface categorical triple (not this app's
+    // --accent/--green/--yellow, which fail the colorblind-separation check at this
+    // lightness) — see dataviz skill palette.md slots 1/2/3.
+    $cRevenue = '#3987e5'; $cExpenses = '#d95926'; $cProfit = '#199e70';
+
+    $chartW = 900; $chartH = 360; $padL = 70; $padR = 20; $padT = 20; $padB = 40;
+    $plotW = $chartW - $padL - $padR;
+    $plotH = $chartH - $padT - $padB;
+
+    function trendCompact($n) {
+        $neg = $n < 0; $n = abs($n);
+        if ($n >= 1000000) $s = round($n/1000000, 1) . 'M';
+        elseif ($n >= 1000) $s = round($n/1000, 1) . 'K';
+        else $s = number_format($n, 0);
+        return ($neg ? '-' : '') . $s;
+    }
+
+    // "Nice numbers" axis rounding (Heckbert) so gridlines land on clean values
+    // (0 / 500K / 1M / ...) instead of arbitrary fractions of the data range.
+    function trendNiceNum($range, $round) {
+        $exponent = floor(log10($range ?: 1));
+        $fraction = $range / (10 ** $exponent);
+        if ($round) {
+            $nice = $fraction < 1.5 ? 1 : ($fraction < 3 ? 2 : ($fraction < 7 ? 5 : 10));
+        } else {
+            $nice = $fraction <= 1 ? 1 : ($fraction <= 2 ? 2 : ($fraction <= 5 ? 5 : 10));
+        }
+        return $nice * (10 ** $exponent);
+    }
+
+    $allVals = array_merge($trendRevenue, $trendExpenses, $trendProfit);
+    $rawMax  = max(max($allVals), 1);
+    $rawMin  = min(0, min($allVals));
+    $tickCount = 5;
+    $niceRange = trendNiceNum($rawMax - $rawMin, false);
+    $tickStep  = trendNiceNum($niceRange / ($tickCount - 1), true);
+    $minVal = floor($rawMin / $tickStep) * $tickStep;
+    $maxVal = ceil($rawMax / $tickStep) * $tickStep;
+    $range  = max($maxVal - $minVal, 1);
+
+    $ticks = [];
+    for ($v = $minVal; $v <= $maxVal + $tickStep * 0.001; $v += $tickStep) { $ticks[] = $v; }
+
+    $xAt = fn($i) => $padL + ($i / 11) * $plotW;
+    $yAt = fn($v) => $padT + $plotH - (($v - $minVal) / $range) * $plotH;
+    $zeroY = $yAt(0);
+
+    $series = [
+        ['key' => 'revenue',  'label' => 'Revenue',  'color' => $cRevenue,  'data' => $trendRevenue],
+        ['key' => 'expenses', 'label' => 'Expenses', 'color' => $cExpenses, 'data' => $trendExpenses],
+        ['key' => 'profit',   'label' => 'Profit',   'color' => $cProfit,   'data' => $trendProfit],
+    ];
+?>
+<div class="card" id="trendCard">
+  <div class="section-header" style="margin-bottom:16px">
+    <div class="card-title" style="margin:0">📊 Yearly Trend — Revenue, Expenses &amp; Profit</div>
+    <form method="GET" style="display:flex;gap:8px;align-items:center">
+      <input type="hidden" name="tab" value="trend">
+      <select name="year" onchange="this.form.submit()">
+        <?php foreach ($trendYearOptions as $y): ?>
+          <option value="<?= $y ?>" <?= $y===$filterYear?'selected':'' ?>><?= $y ?></option>
+        <?php endforeach; ?>
+      </select>
+    </form>
+  </div>
+
+  <!-- Legend -->
+  <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
+    <?php foreach ($series as $s): ?>
+      <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text2)">
+        <svg width="18" height="8" aria-hidden="true"><line x1="0" y1="4" x2="18" y2="4" stroke="<?= $s['color'] ?>" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <?= h($s['label']) ?>
+      </div>
+    <?php endforeach; ?>
+  </div>
+
+  <!-- Chart -->
+  <div style="position:relative">
+    <svg id="trendSvg" viewBox="0 0 <?= $chartW ?> <?= $chartH ?>" style="width:100%;height:auto;display:block;font-family:inherit">
+      <!-- Gridlines + Y labels -->
+      <?php foreach ($ticks as $tv): $ty = $yAt($tv); ?>
+        <line x1="<?= $padL ?>" y1="<?= $ty ?>" x2="<?= $chartW - $padR ?>" y2="<?= $ty ?>" stroke="var(--border)" stroke-width="1"/>
+        <text x="<?= $padL - 10 ?>" y="<?= $ty + 4 ?>" text-anchor="end" font-size="11" fill="var(--text2)"><?= trendCompact($tv) ?></text>
+      <?php endforeach; ?>
+      <!-- Zero baseline, slightly stronger -->
+      <line x1="<?= $padL ?>" y1="<?= $zeroY ?>" x2="<?= $chartW - $padR ?>" y2="<?= $zeroY ?>" stroke="var(--text2)" stroke-width="1"/>
+
+      <!-- X labels -->
+      <?php foreach ($trendMonths as $i => $mLabel): ?>
+        <text x="<?= $xAt($i) ?>" y="<?= $chartH - 14 ?>" text-anchor="middle" font-size="11" fill="var(--text2)"><?= h($mLabel) ?></text>
+      <?php endforeach; ?>
+
+      <!-- Series lines + markers -->
+      <?php foreach ($series as $s):
+        $pts = [];
+        foreach ($s['data'] as $i => $v) { $pts[] = $xAt($i) . ',' . $yAt($v); }
+      ?>
+        <polyline points="<?= implode(' ', $pts) ?>" fill="none" stroke="<?= $s['color'] ?>" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <?php foreach ($s['data'] as $i => $v): ?>
+          <circle class="trend-pt" data-series="<?= $s['key'] ?>" data-i="<?= $i ?>" cx="<?= $xAt($i) ?>" cy="<?= $yAt($v) ?>" r="4" fill="<?= $s['color'] ?>" stroke="var(--bg2)" stroke-width="2"/>
+        <?php endforeach; ?>
+      <?php endforeach; ?>
+      <!-- No direct end-labels: with 3 series this close (Profit = Revenue − Expenses),
+           they collide constantly and become unreadable — legend + hover tooltip + the
+           table view below carry the values instead (see dataviz skill, label collisions). -->
+
+      <!-- Crosshair (hidden until hover) -->
+      <line id="trendCrosshair" x1="0" y1="<?= $padT ?>" x2="0" y2="<?= $chartH - $padB ?>" stroke="var(--text2)" stroke-width="1" stroke-dasharray="3,3" style="display:none"/>
+
+      <!-- Invisible hit columns, one per month -->
+      <?php foreach ($trendMonths as $i => $mLabel): ?>
+        <rect class="trend-hit" data-i="<?= $i ?>" x="<?= $xAt($i) - ($plotW/11/2) ?>" y="<?= $padT ?>" width="<?= $plotW/11 ?>" height="<?= $plotH ?>" fill="transparent"/>
+      <?php endforeach; ?>
+    </svg>
+    <div id="trendTooltip" style="position:absolute;display:none;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.35);white-space:nowrap;z-index:5"></div>
+  </div>
+
+  <div style="margin-top:10px">
+    <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('trendTableWrap').style.display = document.getElementById('trendTableWrap').style.display==='none' ? '' : 'none'">📋 View as Table</button>
+  </div>
+  <div id="trendTableWrap" style="display:none;margin-top:12px" class="table-wrap">
+    <table>
+      <thead><tr><th>Month</th><th>Revenue</th><th>Expenses</th><th>Profit</th></tr></thead>
+      <tbody>
+        <?php foreach ($trendMonths as $i => $mLabel): ?>
+          <tr>
+            <td><?= h($mLabel) ?> <?= $filterYear ?></td>
+            <td><?= formatMoney($trendRevenue[$i]) ?></td>
+            <td><?= formatMoney($trendExpenses[$i]) ?></td>
+            <td style="color:<?= $trendProfit[$i]>=0?'var(--green)':'var(--red)' ?>"><?= formatMoney($trendProfit[$i]) ?></td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function() {
+    const months   = <?= json_encode($trendMonths) ?>;
+    const data     = {
+        revenue:  <?= json_encode($trendRevenue) ?>,
+        expenses: <?= json_encode($trendExpenses) ?>,
+        profit:   <?= json_encode($trendProfit) ?>
+    };
+    const colors = { revenue: '<?= $cRevenue ?>', expenses: '<?= $cExpenses ?>', profit: '<?= $cProfit ?>' };
+    const labels = { revenue: 'Revenue', expenses: 'Expenses', profit: 'Profit' };
+    const sym    = '<?= h(getSetting('currency_symbol','Rs.')) ?>';
+    const fmt    = n => sym + ' ' + n.toLocaleString('en', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    const svg       = document.getElementById('trendSvg');
+    const crosshair = document.getElementById('trendCrosshair');
+    const tooltip   = document.getElementById('trendTooltip');
+    if (!svg) return;
+
+    function showAt(i, clientX, clientY) {
+        const pt = svg.querySelectorAll('.trend-pt[data-i="' + i + '"]')[0];
+        const x = pt ? pt.getAttribute('cx') : 0;
+        crosshair.setAttribute('x1', x);
+        crosshair.setAttribute('x2', x);
+        crosshair.style.display = '';
+
+        let html = '<div style="font-weight:700;margin-bottom:6px;color:var(--text)">' + months[i] + ' <?= $filterYear ?></div>';
+        ['revenue','expenses','profit'].forEach(key => {
+            html += '<div style="display:flex;align-items:center;gap:6px;justify-content:space-between;gap:16px">' +
+                '<span style="display:flex;align-items:center;gap:6px;color:var(--text2)">' +
+                '<svg width="12" height="8"><line x1="0" y1="4" x2="12" y2="4" stroke="' + colors[key] + '" stroke-width="2.5"/></svg>' +
+                labels[key] + '</span>' +
+                '<strong style="color:var(--text)">' + fmt(data[key][i]) + '</strong></div>';
+        });
+        tooltip.innerHTML = html;
+        tooltip.style.display = '';
+
+        const wrapRect = svg.parentElement.getBoundingClientRect();
+        let left = clientX - wrapRect.left + 14;
+        let top  = clientY - wrapRect.top - 10;
+        if (left + 190 > wrapRect.width) left = clientX - wrapRect.left - 200;
+        tooltip.style.left = left + 'px';
+        tooltip.style.top  = Math.max(0, top) + 'px';
+    }
+
+    function hide() {
+        crosshair.style.display = 'none';
+        tooltip.style.display = 'none';
+    }
+
+    svg.querySelectorAll('.trend-hit').forEach(rect => {
+        const i = parseInt(rect.getAttribute('data-i'), 10);
+        rect.addEventListener('pointermove', e => showAt(i, e.clientX, e.clientY));
+        rect.addEventListener('pointerenter', e => showAt(i, e.clientX, e.clientY));
+    });
+    svg.addEventListener('pointerleave', hide);
+})();
+</script>
 <?php endif; ?>
 
 <?php pageFooter(); ?>
