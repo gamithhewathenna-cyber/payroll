@@ -272,7 +272,8 @@ $stats = $db->prepare("SELECT
     SUM(CASE WHEN status='draft' THEN 1 ELSE 0 END) as drafts,
     SUM(CASE WHEN status='sent' THEN total ELSE 0 END) as sent_amt,
     SUM(CASE WHEN status='paid' THEN total ELSE 0 END) as paid_amt,
-    SUM(CASE WHEN status NOT IN ('paid','cancelled') AND due_date IS NOT NULL AND due_date < CURDATE() THEN total ELSE 0 END) as overdue_amt
+    SUM(CASE WHEN status NOT IN ('paid','cancelled') AND due_date IS NOT NULL AND due_date < CURDATE() THEN total ELSE 0 END) as overdue_amt,
+    SUM(CASE WHEN DATE_FORMAT(issue_date,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m') AND status != 'cancelled' THEN total ELSE 0 END) as month_total
 FROM invoices WHERE invoice_type=?");
 $stats->execute([$typeFilter]);
 $stats = $stats->fetch();
@@ -433,6 +434,7 @@ pageHeader('Invoices');
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-bottom:20px">
   <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value"><?= $stats['total'] ?></div></div>
   <div class="stat-card blue"><div class="stat-label">Drafts</div><div class="stat-value"><?= $stats['drafts'] ?></div></div>
+  <div class="stat-card" style="border-color:rgba(168,85,247,.3)"><div class="stat-label" style="color:#a855f7">💰 Total Cost (<?= date('M Y') ?>)</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['month_total'],2) ?></div><div class="stat-sub">Issued this month</div></div>
   <div class="stat-card yellow" style="cursor:pointer" onclick="window.location='?tab=<?= h($tab) ?>&status=pending'"><div class="stat-label">Sent / Pending</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['sent_amt'],2) ?></div><div class="stat-sub">Click to view pending invoices</div></div>
   <?php if ($tab === 'invoices'): ?>
   <div class="stat-card green"><div class="stat-label">Paid</div><div class="stat-value" style="font-size:18px"><?= $sym ?> <?= number_format($stats['paid_amt'],2) ?></div></div>
